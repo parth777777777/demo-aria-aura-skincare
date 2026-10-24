@@ -28,10 +28,8 @@ results include `eligible: boolean | null`; missing customer declarations use
 facts are explicitly labelled input and never override backend-owned order
 status, amount, or recorded delivery age. Unknown tool arguments are rejected.
 
-`build_order_cart` and `place_order` are deferred for this milestone. Although
-listed above, they have no specified catalog, argument/result schemas, pricing
-source, or placement/state rules in the requirements, so neither is
-implemented or exposed in Gemini tool definitions.
+`build_order_cart` and `place_order` use the implementation-only demo contract
+in `docs/cart-order-tool-contract.md`; these are not given requirements.
 
 `cancel_order` only changes the in-memory mock state belonging to the current
 session. It is not a real cancellation transaction.

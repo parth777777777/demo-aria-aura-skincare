@@ -1,0 +1,7 @@
+[
+  {"id": "vitamin-c-serum-30ml", "name": "Vitamin C Serum (30ml)", "price_inr": 699},
+  {"id": "hydrating-sunscreen-spf50", "name": "Hydrating Sunscreen SPF 50", "price_inr": 499},
+  {"id": "green-tea-face-wash", "name": "Green Tea Face Wash", "price_inr": 498},
+  {"id": "green-tea-toner", "name": "Green Tea Toner", "price_inr": 400},
+  {"id": "aloe-moisturizer", "name": "Aloe Vera Moisturizer", "price_inr": 250}
+]
