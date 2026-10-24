@@ -29,7 +29,10 @@ def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
 
 def test_session_service_is_required_and_isolated():
     first, second = OrderService(), OrderService()
-    result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"})
+    confirmation = {}
+    result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=confirmation)
+    assert result["error"]["code"] == "CONFIRMATION_REQUIRED"
+    result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=confirmation, finalized_user_turn=1)
     assert result["status"] == "Cancelled"
     assert second.get_order_details("ORD-103")["order"]["status"] == "Processing"
 
@@ -104,7 +107,9 @@ def test_place_order_is_idempotent_visible_cancellable_and_session_local():
     assert placed["order"]["order_id"] == "ORD-201"
     assert repeat["idempotent"] is True
     assert first.get_order_details("ORD-201")["order"]["status"] == "Processing"
-    assert first.cancel_order("ORD-201")["status"] == "Cancelled"
+    guard = {}
+    assert registry.execute_tool(first, "cancel_order", {"order_id": "ORD-201"}, confirmation_state=guard)["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert registry.execute_tool(first, "cancel_order", {"order_id": "ORD-201"}, confirmation_state=guard, finalized_user_turn=1)["status"] == "Cancelled"
     assert second.place_order(cart["cart_id"])["error"]["code"] == "CART_NOT_FOUND"
     second_cart = _cart(second, "green-tea-face-wash")["cart"]
     assert second_cart["cart_id"] == "CART-000001"

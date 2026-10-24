@@ -124,11 +124,25 @@ def get_tool_definitions() -> list[dict[str, Any]]:
 def list_tools() -> tuple[str, ...]:
     return tuple(definition["name"] for definition in _DEFINITIONS)
 
-def execute_tool(service: OrderService, name: str, arguments: Any) -> dict[str, Any]:
+def execute_tool(service: OrderService, name: str, arguments: Any, *,
+                 confirmation_state: dict[str, Any] | None = None,
+                 finalized_user_turn: int = 0) -> dict[str, Any]:
     if not isinstance(name, str) or name not in _SUPPORTED:
         return {"ok": False, "error": {"code": "UNKNOWN_TOOL", "message": "Tool is not available."}}
     try:
         validated = _validate(name, arguments)
     except ToolArgumentError as error:
         return {"ok": False, "error": {"code": "INVALID_ARGUMENTS", "message": str(error)}}
+    if name in {"cancel_order", "place_order"}:
+        target_key = validated["order_id"] if name == "cancel_order" else validated["cart_id"]
+        state = confirmation_state if confirmation_state is not None else {}
+        key = (name, target_key)
+        pending = state.get(key)
+        if pending is None or finalized_user_turn <= pending:
+            state[key] = finalized_user_turn
+            action = (f"cancel order {target_key}" if name == "cancel_order"
+                      else f"place the order for cart {target_key}")
+            return {"ok": False, "error": {"code": "CONFIRMATION_REQUIRED",
+                    "message": f"Please confirm that you want me to {action}. Ask the user, then wait for a finalized user turn before retrying."}}
+        state.pop(key, None)
     return getattr(service, name)(**validated)
