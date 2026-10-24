@@ -43,7 +43,7 @@ Implement policy rules in Python so the model cannot unilaterally override them.
 
 | Rule | Requirement |
 |---|---|
-| Shipping fee | Free delivery on orders above ₹499; orders below ₹499 have a ₹50 shipping fee. |
+| Shipping fee | Free delivery only on orders strictly above ₹499; orders at or below ₹499 have a ₹50 shipping fee. Exactly ₹499 pays ₹50. |
 | Standard delivery | Explain that standard delivery takes 3–5 business days. |
 | Returns | Accept returns within 7 days of delivery only for unopened, unused products in original packaging. |
 | Damaged products | The issue must be reported within 48 hours of delivery, with photos, for replacement. |
@@ -191,5 +191,9 @@ The assessment requires a browser-based experience and mock order database, so t
 ## 11. Implementation principle
 
 **The model handles conversation; Python handles facts and policy decisions.**
+
+Cancellation in this milestone is deliberately implemented as an in-memory,
+per-session mock state change only. It does not contact a real order system or
+perform a real cancellation transaction.
 
 Prioritize a complete, reliable core workflow over extra features. Verify the selected Gemini Live API capabilities and account limits before committing to implementation details, and test the public deployment rather than assuming local success guarantees production success.
