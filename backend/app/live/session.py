@@ -7,6 +7,35 @@ from app.live.prompt import ARIA_SYSTEM_PROMPT
 from app.tools.registry import get_tool_definitions
 
 
+_SUPPORTED_SCHEMA_KEYS = frozenset({
+    "type", "description", "properties", "required", "items", "enum",
+    "minimum", "maximum", "minItems", "maxItems", "nullable", "format",
+})
+
+
+def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Copy a registry schema into the JSON Schema subset accepted by Live."""
+    sanitized: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key not in _SUPPORTED_SCHEMA_KEYS:
+            continue
+        if key == "properties":
+            sanitized[key] = {name: _sanitize_schema(child) for name, child in value.items()}
+        elif key == "items":
+            sanitized[key] = _sanitize_schema(value)
+        else:
+            sanitized[key] = value
+    return sanitized
+
+
+def get_gemini_tool_declarations() -> list[dict[str, Any]]:
+    """Return sanitized copies; registry schemas remain strict and unchanged."""
+    declarations = get_tool_definitions()
+    for declaration in declarations:
+        declaration["parameters"] = _sanitize_schema(declaration["parameters"])
+    return declarations
+
+
 class GeminiLiveSession:
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key, self.model = api_key, model
@@ -19,7 +48,7 @@ class GeminiLiveSession:
         client = genai.Client(api_key=self.api_key)
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"], system_instruction=ARIA_SYSTEM_PROMPT,
-            tools=[types.Tool(function_declarations=get_tool_definitions())],
+            tools=[types.Tool(function_declarations=get_gemini_tool_declarations())],
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
@@ -31,7 +60,7 @@ class GeminiLiveSession:
 
     async def send_text(self, text: str) -> None:
         await self.session.send_client_content(
-            turns={"parts": [{"text": text}]}, turn_complete=True)
+            turns={"role": "user", "parts": [{"text": text}]}, turn_complete=True)
 
     async def send_tool_response(self, call_id: str, name: str, result: dict[str, Any]) -> None:
         from google.genai import types

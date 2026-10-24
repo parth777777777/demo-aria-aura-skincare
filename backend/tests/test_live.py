@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.live.prompt import ARIA_SYSTEM_PROMPT
+from app.live.session import GeminiLiveSession
 from app.live.summary import DeterministicSummary, validate_summary
 
 
@@ -34,6 +35,7 @@ class FakeLive:
     def __init__(self, *_):
         self.queue = asyncio.Queue()
         self.audio = []
+        self.text = []
         self.responses = []
         self.closed = False
         self.connected = False
@@ -41,6 +43,7 @@ class FakeLive:
 
     async def connect(self): self.connected = True
     async def send_audio(self, data): self.audio.append(data)
+    async def send_text(self, text): self.text.append(text)
     async def send_tool_response(self, call_id, name, result): self.responses.append((call_id, name, result))
     async def close(self): self.closed = True
     async def events(self):
@@ -53,9 +56,32 @@ class FakeLive:
             self.cancelled = True
 
 
+def test_send_text_uses_client_content_with_explicit_user_role():
+    class SDKSession:
+        def __init__(self): self.calls = []
+        async def send_client_content(self, **kwargs): self.calls.append(("send_client_content", kwargs))
+        async def send_realtime_input(self, **kwargs): self.calls.append(("send_realtime_input", kwargs))
+
+    async def exercise():
+        wrapper = GeminiLiveSession("unused", "unused")
+        wrapper.session = SDKSession()
+        await wrapper.send_text("hello")
+        assert wrapper.session.calls == [("send_client_content", {
+            "turns": {"role": "user", "parts": [{"text": "hello"}]},
+            "turn_complete": True,
+        })]
+
+    asyncio.run(exercise())
+
+
 def test_prompt_contains_policy_boundaries_and_windows():
+    prompt = " ".join(ARIA_SYSTEM_PROMPT.split())
     for fact in ("₹499", "3–5", "7 days", "48 hours", "₹2,500"):
-        assert fact in ARIA_SYSTEM_PROMPT
+        assert fact in prompt
+    assert "call cancel_order or" in prompt
+    assert "do not ask for verbal confirmation before that first tool call" in prompt
+    assert "Only after a clear yes in a later turn, call the same tool again" in prompt
+    assert "Never say" in prompt and "ok true" in prompt
 
 
 def test_summary_validation_and_most_recent_successful_order():

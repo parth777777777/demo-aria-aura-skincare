@@ -27,6 +27,50 @@ def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
     })["error"]["code"] == "INVALID_ARGUMENTS"
 
 
+def test_gemini_declarations_are_sanitized_without_weakening_registry():
+    from google.genai import types
+    from app.live.session import get_gemini_tool_declarations
+
+    allowed = {"type", "description", "properties", "required", "items", "enum",
+               "minimum", "maximum", "minItems", "maxItems", "nullable", "format"}
+
+    def assert_sanitized(schema):
+        assert set(schema) <= allowed
+        for child in schema.get("properties", {}).values():
+            assert_sanitized(child)
+        if "items" in schema:
+            assert_sanitized(schema["items"])
+
+    declarations = get_gemini_tool_declarations()
+    assert len(declarations) == 7
+    for declaration in declarations:
+        assert_sanitized(declaration["parameters"])
+        sdk_declaration = types.FunctionDeclaration(**declaration)
+        sdk_tool = types.Tool(function_declarations=[sdk_declaration])
+        dumped = sdk_tool.model_dump_json(by_alias=True, exclude_none=True)
+        assert "additional_properties" not in dumped
+        assert "additionalProperties" not in dumped
+
+    by_name = {item["name"]: item for item in declarations}
+    assert by_name["get_order_details"]["parameters"]["required"] == ["order_id"]
+    assert by_name["cancel_order"]["parameters"]["required"] == ["order_id"]
+    assert by_name["check_cancellation_eligibility"]["parameters"]["required"] == ["order_id"]
+    assert by_name["check_return_eligibility"]["parameters"]["required"] == ["order_id"]
+    assert by_name["check_damaged_product_eligibility"]["parameters"]["required"] == ["order_id"]
+    assert by_name["build_order_cart"]["parameters"]["required"] == ["items", "payment_method"]
+    assert by_name["build_order_cart"]["parameters"]["properties"]["payment_method"]["enum"] == ["COD", "PREPAID"]
+    assert by_name["place_order"]["parameters"]["required"] == ["cart_id"]
+
+    # Sanitizing declarations must not edit the strict registry schema or its validator.
+    assert "additionalProperties" not in by_name["get_order_details"]["parameters"]
+    assert registry.get_tool_definitions()[0]["parameters"]["additionalProperties"] is False
+    for extra in ("status", "price", "total", "undeclared"):
+        result = registry.execute_tool(OrderService(), "get_order_details", {
+            "order_id": "ORD-103", extra: "untrusted"
+        })
+        assert result["error"]["code"] == "INVALID_ARGUMENTS"
+
+
 def test_session_service_is_required_and_isolated():
     first, second = OrderService(), OrderService()
     confirmation = {}
@@ -35,6 +79,21 @@ def test_session_service_is_required_and_isolated():
     result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=confirmation, finalized_user_turn=1)
     assert result["status"] == "Cancelled"
     assert second.get_order_details("ORD-103")["order"]["status"] == "Processing"
+
+
+def test_confirmation_required_explains_action_was_not_executed_and_names_target():
+    service = OrderService()
+    cancellation = registry.execute_tool(
+        service, "cancel_order", {"order_id": "ORD-103"}, confirmation_state={})
+    assert cancellation["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert "not executed" in cancellation["error"]["message"]
+    assert "cancel order ORD-103" in cancellation["error"]["message"]
+
+    placement = registry.execute_tool(
+        service, "place_order", {"cart_id": "CART-000001"}, confirmation_state={})
+    assert placement["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert "not executed" in placement["error"]["message"]
+    assert "place the order for cart CART-000001" in placement["error"]["message"]
 
 
 def test_delivery_age_is_authoritative_and_non_delivered_reason():

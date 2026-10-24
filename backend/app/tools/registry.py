@@ -143,6 +143,6 @@ def execute_tool(service: OrderService, name: str, arguments: Any, *,
             action = (f"cancel order {target_key}" if name == "cancel_order"
                       else f"place the order for cart {target_key}")
             return {"ok": False, "error": {"code": "CONFIRMATION_REQUIRED",
-                    "message": f"Please confirm that you want me to {action}. Ask the user, then wait for a finalized user turn before retrying."}}
+                    "message": f"This action was not executed. Please confirm that you want me to {action}. After the customer clearly confirms in a later turn, call this same tool again."}}
         state.pop(key, None)
     return getattr(service, name)(**validated)
