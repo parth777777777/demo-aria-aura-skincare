@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { AlertCircle, AudioLines, Ban, Check, CircleAlert, Clock, Copy, FileText, Leaf, LoaderCircle, Mic, Minus, PackageCheck, Phone, PhoneOff, RotateCcw, Sparkles, Truck } from 'lucide-react'
+import { AlertCircle, AudioLines, Check, CircleAlert, Clock, Copy, FileText, Leaf, LoaderCircle, Mic, PackageCheck, Phone, PhoneOff, RotateCcw, Sparkles, Truck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,6 +8,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { callReducer, initialCallState } from './state/callReducer.js'
 import { selectVoiceState } from './state/selectors.js'
 import { useMockReplay } from './hooks/useMockReplay.js'
+import { useHashRoute } from './hooks/useHashRoute.js'
+import { getCustomerIntentLabel, getOrderIdLabel, getResolutionPill, getVisibleNotice } from './lib/display.js'
 
 const orders = [
   { id: 'ORD-101', product: 'Vitamin C Serum 30ml', status: 'Out for Delivery', detail: 'Today by 6 PM', hint: 'Where is my order?', Icon: Truck, tone: 'sage' },
@@ -32,7 +34,7 @@ function OrderResult({ tool }) {
 function App() {
   const [state, dispatch] = useReducer(callReducer, initialCallState)
   const [elapsed, setElapsed] = useState(0)
-  const [route, setRoute] = useState(window.location.hash === '#/summary' ? 'summary' : 'call')
+  const [route, setRoute] = useHashRoute()
   const [mockData, setMockData] = useState(null)
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef(null)
@@ -46,11 +48,6 @@ function App() {
   const callActive = ['connecting', 'live', 'ending'].includes(state.status.state)
   const debug = new URLSearchParams(window.location.search).get('debug') === '1'
 
-  useEffect(() => {
-    const onHash = () => setRoute(window.location.hash === '#/summary' ? 'summary' : 'call')
-    window.addEventListener('hashchange', onHash)
-    return () => window.removeEventListener('hashchange', onHash)
-  }, [])
   useEffect(() => {
     if (import.meta.env.DEV) {
       import('./mocks/call-events.json').then((module) => setMockData(module.default))
@@ -96,15 +93,7 @@ function App() {
   const navigateSummary = () => { window.location.hash = '#/summary'; setRoute('summary') }
   const time = `${String(Math.floor(elapsed / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`
   const summary = state.summary && Object.fromEntries(summaryKeys.map((key) => [key, state.summary[key]]))
-  const errorMessage = state.status.state === 'ended' ? null : state.error?.recoverable === true && state.turns.length > 0 ? null : state.error?.message || (state.status.reason === 'error' ? 'This call ended unexpectedly.' : null)
-  const resolution = {
-    resolved: { label: 'Resolved', Icon: Check, style: 'bg-[var(--success)] text-[var(--success-ink)]' },
-    not_eligible: { label: 'Not eligible', Icon: Ban, style: 'bg-[var(--warning)] text-[var(--warning-ink)]' },
-    unresolved: { label: 'Unresolved', Icon: Clock, style: 'bg-[var(--warning)] text-[var(--warning-ink)]' },
-    out_of_scope: { label: 'Out of scope', Icon: Minus, style: 'bg-[#e3eadf] text-primary' },
-    no_interaction: { label: 'No interaction', Icon: Minus, style: 'bg-muted text-foreground' },
-  }
-  const intentLabels = { order_status: 'Order status', cancellation: 'Cancellation', return: 'Return', damaged_product: 'Damaged product', delivery_info: 'Delivery info', place_order: 'Place order', policy_question: 'Policy question', out_of_scope: 'Out of scope', unclear: 'Unclear' }
+  const { errorMessage, sessionLimit } = getVisibleNotice({ error: state.error, status: state.status, turnCount: state.turns.length })
   const copySummary = async () => {
     await navigator.clipboard.writeText(JSON.stringify(summary, null, 2))
     setCopied(true)
@@ -115,7 +104,7 @@ function App() {
   return <main className="mx-auto w-full max-w-[1440px] px-[13px] sm:px-[22px] lg:px-[42px]">
     <header className="flex h-[66px] items-center justify-between border-b border-border sm:h-[82px]"><a href="#/" onClick={() => setRoute('call')} className="flex items-center gap-3 font-sans text-sm font-bold tracking-[.16em] text-primary"><span className="grid size-[34px] place-items-center rounded-full bg-primary text-primary-foreground"><Sparkles size={17} /></span><span className="leading-[1.05]">AURA<small className="mt-[2px] block text-[13px] leading-[1.05] tracking-[.24em]">SKINCARE</small></span></a></header>
     {route === 'summary' ? <section className="mx-auto my-8 w-full max-w-3xl rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-8" aria-labelledby="summary-heading">
-      {summary ? <><div className="flex flex-wrap items-center justify-between gap-3"><h1 id="summary-heading" className="font-heading text-3xl">Call summary</h1>{(() => { const item = resolution[summary.resolution_status] || resolution.no_interaction; return <Badge className={`h-auto gap-2 rounded-full px-3 py-1 text-sm font-medium normal-case ${item.style}`}><item.Icon size={16} />{item.label}</Badge> })()}</div><dl className="mt-6 grid gap-4"><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Customer intent</dt><dd className="mt-1">{intentLabels[summary.customer_intent] || summary.customer_intent}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Order ID</dt><dd className="mt-1 font-mono">{summary.order_id ?? 'No order mentioned'}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Call summary</dt><dd className="mt-1 leading-relaxed">{summary.call_summary}</dd></div></dl><div className="mt-6 flex items-center justify-between gap-3"><h2 className="font-heading text-xl">Structured summary (JSON)</h2><Button variant="outline" size="sm" onClick={copySummary} aria-live="polite">{copied ? <Check /> : <Copy />}{copied ? 'Copied' : 'Copy'}</Button></div><Card className="mt-3 rounded-2xl bg-card"><CardContent className="p-5"><pre className="m-0 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">{JSON.stringify(summary, null, 2)}</pre></CardContent></Card><div className="mt-6 flex flex-wrap gap-3"><Button className="h-[52px] rounded-full text-base" onClick={startAnother}><RotateCcw />Start another call</Button><Button className="h-[52px] rounded-full text-base" variant="outline" onClick={() => { window.location.hash = '#/'; setRoute('call') }}>Back to conversation</Button></div></> : <><h1 id="summary-heading" className="font-heading text-3xl">No call to summarize</h1><Button className="mt-5 h-[52px] rounded-full text-base" onClick={() => { window.location.hash = '#/'; setRoute('call') }}>Back to call</Button></>}
+      {summary ? <><div className="flex flex-wrap items-center justify-between gap-3"><h1 id="summary-heading" className="font-heading text-3xl">Call summary</h1>{(() => { const item = getResolutionPill(summary.resolution_status); return <Badge className={`h-auto gap-2 rounded-full px-3 py-1 text-sm font-medium normal-case ${item.style}`}><item.Icon size={16} />{item.label}</Badge> })()}</div><dl className="mt-6 grid gap-4"><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Customer intent</dt><dd className="mt-1">{getCustomerIntentLabel(summary.customer_intent)}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Order ID</dt><dd className="mt-1 font-mono">{getOrderIdLabel(summary.order_id)}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Call summary</dt><dd className="mt-1 leading-relaxed">{summary.call_summary}</dd></div></dl><div className="mt-6 flex items-center justify-between gap-3"><h2 className="font-heading text-xl">Structured summary (JSON)</h2><Button variant="outline" size="sm" onClick={copySummary} aria-live="polite">{copied ? <Check /> : <Copy />}{copied ? 'Copied' : 'Copy'}</Button></div><Card className="mt-3 rounded-2xl bg-card"><CardContent className="p-5"><pre className="m-0 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">{JSON.stringify(summary, null, 2)}</pre></CardContent></Card><div className="mt-6 flex flex-wrap gap-3"><Button className="h-[52px] rounded-full text-base" onClick={startAnother}><RotateCcw />Start another call</Button><Button className="h-[52px] rounded-full text-base" variant="outline" onClick={() => { window.location.hash = '#/'; setRoute('call') }}>Back to conversation</Button></div></> : <><h1 id="summary-heading" className="font-heading text-3xl">No call to summarize</h1><Button className="mt-5 h-[52px] rounded-full text-base" onClick={() => { window.location.hash = '#/'; setRoute('call') }}>Back to call</Button></>}
     </section> : <div className="grid items-stretch gap-4 py-4 lg:grid-cols-[minmax(360px,.82fr)_minmax(0,1.18fr)] lg:gap-7 lg:py-[30px]">
       <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm lg:min-h-[730px]" aria-labelledby="call-title">
         <div className="relative h-[155px] overflow-hidden bg-gradient-to-br from-[#dce5d6] via-[#9daf99] to-[#758b76] sm:h-[190px] lg:h-[206px]"><img src="/src/assets/companion.webp" alt="" className="absolute size-full object-cover" onError={(event) => { event.currentTarget.style.display = 'none' }} /><span className="absolute bottom-[18px] left-6 font-heading text-lg italic text-[#263b2e]">A little care goes a long way</span></div>
@@ -127,7 +116,7 @@ function App() {
       </section>
       <section className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm lg:min-h-[730px]" aria-labelledby="conversation-title">
         <div className="flex items-center justify-between border-b border-border px-5 py-5 sm:px-[29px]"><div>{state.status.state === 'live' && <span className="text-[13px] font-bold tracking-[.16em] text-muted-foreground">LIVE CALL</span>}<h2 id="conversation-title" className="mt-1 font-heading text-[28px] sm:text-[30px]">Your conversation</h2></div><span className="flex items-center gap-2 rounded-full border border-border px-2.5 py-2 text-sm text-muted-foreground"><i className={`size-1.5 rounded-full ${voiceState === 'live' ? 'bg-green-700' : 'bg-border'}`} />{voiceState === 'live' ? 'In call' : labels[voiceState]}</span></div>
-        {state.status.reason === 'session_limit' && state.status.state === 'ended' && <Alert className="mx-4 mt-4 w-auto min-w-0 max-w-[calc(100%-2rem)] border-amber-300 bg-amber-50 text-amber-950 sm:mx-7"><AlertCircle /><AlertDescription>This call ended because its time limit was reached.</AlertDescription></Alert>}
+        {sessionLimit && <Alert className="mx-4 mt-4 w-auto min-w-0 max-w-[calc(100%-2rem)] border-amber-300 bg-amber-50 text-amber-950 sm:mx-7"><AlertCircle /><AlertDescription>This call ended because its time limit was reached.</AlertDescription></Alert>}
         {errorMessage && <Alert variant="destructive" className="mx-4 mt-4 w-auto min-w-0 max-w-[calc(100%-2rem)] text-[var(--error-ink)] [&_[data-slot=alert-description]]:text-current sm:mx-7"><AlertCircle /><AlertDescription>{errorMessage}</AlertDescription></Alert>}
         <ScrollArea className="min-h-[300px] flex-1 overflow-hidden px-4 py-5 sm:px-7" ref={transcriptRef} aria-live="polite"><div className="min-w-0">
           {state.turns.length === 0 && <div className="mx-auto flex min-h-[300px] max-w-[420px] flex-col items-center justify-center text-center"><div className="mb-4 grid size-11 place-items-center rounded-full bg-muted text-primary"><Sparkles size={19} /></div><h3 className="mb-2 font-heading text-xl">Your conversation will appear here</h3><p className="text-sm leading-relaxed text-muted-foreground">When you start a call, Aria's replies and helpful order details will show up in this space.</p><div className="mt-6 w-full text-left"><div className="mb-3 flex items-baseline justify-between"><h3 className="font-heading text-lg">Try one of these orders</h3><span className="text-sm text-muted-foreground">Sample data</span></div><ul className="grid gap-3">{orders.map(({ Icon, tone, ...order }) => <li key={order.id} className="pointer-events-none rounded-[20px] border border-border bg-card p-4 shadow-sm"><div className="flex items-center justify-between gap-2"><span className="rounded-full bg-muted px-2.5 py-1 font-mono text-sm">{order.id}</span><Badge className={`h-auto gap-1.5 px-2.5 py-1.5 text-sm ${tone === 'sage' ? 'bg-[#e3eadf] text-primary' : tone === 'success' ? 'bg-[var(--success)] text-[var(--success-ink)]' : 'bg-[var(--warning)] text-[var(--warning-ink)]'}`}><Icon size={15} />{order.status}</Badge></div><p className="mt-2 text-base">{order.product}</p><p className="mt-1 text-sm text-muted-foreground">{order.detail}</p><p className="mt-1 text-sm text-muted-foreground">Try saying: &quot;{order.hint}&quot;</p></li>)}</ul></div></div>}
