@@ -1,11 +1,116 @@
-import { Check, Copy, RotateCcw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent } from '@/components/ui/card'
-import { getCustomerIntentLabel, getOrderIdLabel, getResolutionPill } from '../lib/display.js'
+import { Check, Copy, RotateCcw } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  getCustomerIntentLabel,
+  getOrderIdLabel,
+  getResolutionPill,
+} from "../lib/display.js";
 
-export function SummaryPage({ summary, copied, copySummary, startAnother, backToCall }) {
-  return <section className="mx-auto my-8 w-full max-w-3xl rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-8" aria-labelledby="summary-heading">
-    {summary ? <><div className="flex flex-wrap items-center justify-between gap-3"><h1 id="summary-heading" className="font-heading text-3xl">Call summary</h1>{(() => { const item = getResolutionPill(summary.resolution_status); return <Badge className={`h-auto gap-2 rounded-full px-3 py-1 text-sm font-medium normal-case ${item.style}`}><item.Icon size={16} />{item.label}</Badge> })()}</div><dl className="mt-6 grid gap-4"><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Customer intent</dt><dd className="mt-1">{getCustomerIntentLabel(summary.customer_intent)}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Order ID</dt><dd className="mt-1 font-mono">{getOrderIdLabel(summary.order_id)}</dd></div><div><dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">Call summary</dt><dd className="mt-1 leading-relaxed">{summary.call_summary}</dd></div></dl><div className="mt-6 flex items-center justify-between gap-3"><h2 className="font-heading text-xl">Structured summary (JSON)</h2><Button variant="outline" size="sm" onClick={copySummary} aria-live="polite">{copied ? <Check /> : <Copy />}{copied ? 'Copied' : 'Copy'}</Button></div><Card className="mt-3 rounded-2xl bg-card"><CardContent className="p-5"><pre className="m-0 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">{JSON.stringify(summary, null, 2)}</pre></CardContent></Card><div className="mt-6 flex flex-wrap gap-3"><Button className="h-[52px] rounded-full text-base" onClick={startAnother}><RotateCcw />Start another call</Button><Button className="h-[52px] rounded-full text-base" variant="outline" onClick={backToCall}>Back to conversation</Button></div></> : <><h1 id="summary-heading" className="font-heading text-3xl">No call to summarize</h1><Button className="mt-5 h-[52px] rounded-full text-base" onClick={backToCall}>Back to call</Button></>}
-  </section>
+export function SummaryPage({
+  summary,
+  copied,
+  copySummary,
+  startAnother,
+  backToCall,
+}) {
+  return (
+    <section
+      className="mx-auto my-8 w-full max-w-3xl rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-8"
+      aria-labelledby="summary-heading"
+    >
+      {summary ? (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h1 id="summary-heading" className="font-heading text-3xl">
+              Call summary
+            </h1>
+            {(() => {
+              const item = getResolutionPill(summary.resolution_status);
+              return (
+                <Badge
+                  className={`h-auto gap-2 rounded-full px-3 py-1 text-sm font-medium normal-case ${item.style}`}
+                >
+                  <item.Icon size={16} />
+                  {item.label}
+                </Badge>
+              );
+            })()}
+          </div>
+          <dl className="mt-6 grid gap-4">
+            <div>
+              <dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                Customer intent
+              </dt>
+              <dd className="mt-1">
+                {getCustomerIntentLabel(summary.customer_intent)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                Order ID
+              </dt>
+              <dd className="mt-1 font-mono">
+                {getOrderIdLabel(summary.order_id)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-bold uppercase tracking-widest text-muted-foreground">
+                Call summary
+              </dt>
+              <dd className="mt-1 leading-relaxed">{summary.call_summary}</dd>
+            </div>
+          </dl>
+          <div className="mt-6 flex items-center justify-between gap-3">
+            <h2 className="font-heading text-xl">Structured summary (JSON)</h2>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={copySummary}
+              aria-live="polite"
+            >
+              {copied ? <Check /> : <Copy />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <Card className="mt-3 rounded-2xl bg-card">
+            <CardContent className="p-5">
+              <pre className="m-0 whitespace-pre-wrap break-words font-mono text-sm leading-relaxed">
+                {JSON.stringify(summary, null, 2)}
+              </pre>
+            </CardContent>
+          </Card>
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Button
+              className="h-[52px] rounded-full text-base"
+              onClick={startAnother}
+            >
+              <RotateCcw />
+              Start another call
+            </Button>
+            <Button
+              className="h-[52px] rounded-full text-base"
+              variant="outline"
+              onClick={backToCall}
+            >
+              Back to conversation
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <h1 id="summary-heading" className="font-heading text-3xl">
+            No call to summarize
+          </h1>
+          <Button
+            className="mt-5 h-[52px] rounded-full text-base"
+            onClick={backToCall}
+          >
+            Back to call
+          </Button>
+        </>
+      )}
+    </section>
+  );
 }

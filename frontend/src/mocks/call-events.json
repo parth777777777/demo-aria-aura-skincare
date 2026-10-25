@@ -2,17 +2,252 @@
   "cancel": [
     { "type": "status", "state": "connecting", "ts": "2026-01-01T10:00:00Z" },
     { "type": "status", "state": "live", "ts": "2026-01-01T10:00:01Z" },
-    { "type": "transcript", "turn_id": "u1", "role": "user", "text": "Please cancel order ORD-103.", "final": true, "ts": "2026-01-01T10:00:04Z" },
-    { "type": "tool_call", "call_id": "c1", "name": "cancel_order", "args": { "order_id": "ORD-103" }, "ts": "2026-01-01T10:00:05Z" },
-    { "type": "tool_result", "call_id": "c1", "name": "cancel_order", "result": { "ok": false, "error": { "code": "CONFIRMATION_REQUIRED", "message": "Ask the customer to confirm cancellation." } }, "ts": "2026-01-01T10:00:05Z" },
-    { "type": "transcript", "turn_id": "a1", "role": "aria", "text": "I can help with that. Please confirm you want me to cancel ORD-103.", "final": true, "ts": "2026-01-01T10:00:07Z" },
-    { "type": "transcript", "turn_id": "u2", "role": "user", "text": "Yes, please cancel it.", "final": true, "ts": "2026-01-01T10:00:10Z" },
-    { "type": "tool_call", "call_id": "c2", "name": "cancel_order", "args": { "order_id": "ORD-103" }, "ts": "2026-01-01T10:00:11Z" },
-    { "type": "tool_result", "call_id": "c2", "name": "cancel_order", "result": { "ok": true, "order_id": "ORD-103", "status": "Cancelled" }, "ts": "2026-01-01T10:00:11Z" },
-    { "type": "transcript", "turn_id": "a2", "role": "aria", "text": "The backend confirmed that ORD-103 has been cancelled.", "final": true, "ts": "2026-01-01T10:00:13Z" },
-    { "type": "summary", "summary": { "customer_intent": "cancellation", "order_id": "ORD-103", "resolution_status": "resolved", "call_summary": "Customer requested cancellation of ORD-103, confirmed the request, and the backend reported success." }, "ts": "2026-01-01T10:00:15Z" },
-    { "type": "status", "state": "ended", "reason": "user_ended", "ts": "2026-01-01T10:00:15Z" }
+    {
+      "type": "transcript",
+      "turn_id": "u1",
+      "role": "user",
+      "text": "Please cancel order ORD-103.",
+      "final": true,
+      "ts": "2026-01-01T10:00:04Z"
+    },
+    {
+      "type": "tool_call",
+      "call_id": "c1",
+      "name": "cancel_order",
+      "args": { "order_id": "ORD-103" },
+      "ts": "2026-01-01T10:00:05Z"
+    },
+    {
+      "type": "tool_result",
+      "call_id": "c1",
+      "name": "cancel_order",
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "CONFIRMATION_REQUIRED",
+          "message": "Ask the customer to confirm cancellation."
+        }
+      },
+      "ts": "2026-01-01T10:00:05Z"
+    },
+    {
+      "type": "transcript",
+      "turn_id": "a1",
+      "role": "aria",
+      "text": "I can help with that. Please confirm you want me to cancel ORD-103.",
+      "final": true,
+      "ts": "2026-01-01T10:00:07Z"
+    },
+    {
+      "type": "transcript",
+      "turn_id": "u2",
+      "role": "user",
+      "text": "Yes, please cancel it.",
+      "final": true,
+      "ts": "2026-01-01T10:00:10Z"
+    },
+    {
+      "type": "tool_call",
+      "call_id": "c2",
+      "name": "cancel_order",
+      "args": { "order_id": "ORD-103" },
+      "ts": "2026-01-01T10:00:11Z"
+    },
+    {
+      "type": "tool_result",
+      "call_id": "c2",
+      "name": "cancel_order",
+      "result": { "ok": true, "order_id": "ORD-103", "status": "Cancelled" },
+      "ts": "2026-01-01T10:00:11Z"
+    },
+    {
+      "type": "transcript",
+      "turn_id": "a2",
+      "role": "aria",
+      "text": "The backend confirmed that ORD-103 has been cancelled.",
+      "final": true,
+      "ts": "2026-01-01T10:00:13Z"
+    },
+    {
+      "type": "status",
+      "state": "ending",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:14Z"
+    },
+    {
+      "type": "summary",
+      "summary": {
+        "customer_intent": "cancellation",
+        "order_id": "ORD-103",
+        "resolution_status": "resolved",
+        "call_summary": "Customer requested cancellation of ORD-103, confirmed the request, and the backend reported success."
+      },
+      "ts": "2026-01-01T10:00:15Z"
+    },
+    {
+      "type": "status",
+      "state": "ended",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:15Z"
+    }
   ],
-  "error": [{ "type": "error", "code": "GEMINI_UNAVAILABLE", "message": "The voice service is unavailable.", "recoverable": true, "ts": "2026-01-01T10:00:00Z" }, { "type": "status", "state": "error", "reason": "error", "ts": "2026-01-01T10:00:00Z" }],
-  "session_limit": [{ "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" }, { "type": "status", "state": "ending", "reason": "session_limit", "ts": "2026-01-01T10:15:00Z" }, { "type": "summary", "summary": { "customer_intent": "unclear", "order_id": null, "resolution_status": "unresolved", "call_summary": "The call ended when the session limit was reached." }, "ts": "2026-01-01T10:15:00Z" }, { "type": "status", "state": "ended", "reason": "session_limit", "ts": "2026-01-01T10:15:00Z" }]
+  "lookup": [
+    { "type": "status", "state": "connecting", "ts": "2026-01-01T10:00:00Z" },
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:01Z" },
+    {
+      "type": "transcript",
+      "turn_id": "u1",
+      "role": "user",
+      "text": "Where is my order ORD-101?",
+      "final": true,
+      "ts": "2026-01-01T10:00:02Z"
+    },
+    {
+      "type": "tool_call",
+      "call_id": "c1",
+      "name": "get_order_details",
+      "args": { "order_id": "ORD-101" },
+      "ts": "2026-01-01T10:00:03Z"
+    },
+    {
+      "type": "tool_result",
+      "call_id": "c1",
+      "name": "get_order_details",
+      "result": {
+        "ok": true,
+        "order": {
+          "order_id": "ORD-101",
+          "status": "Out for Delivery",
+          "items": ["Vitamin C Serum (30ml)"]
+        }
+      },
+      "ts": "2026-01-01T10:00:04Z"
+    },
+    {
+      "type": "transcript",
+      "turn_id": "a1",
+      "role": "aria",
+      "text": "Your Vitamin C Serum is out for delivery and expected today by 6 PM.",
+      "final": true,
+      "ts": "2026-01-01T10:00:05Z"
+    },
+    {
+      "type": "status",
+      "state": "ending",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:05Z"
+    },
+    {
+      "type": "summary",
+      "summary": {
+        "customer_intent": "order_status",
+        "order_id": "ORD-101",
+        "resolution_status": "resolved",
+        "call_summary": "Customer asked about ORD-101. It is out for delivery and expected today by 6 PM."
+      },
+      "ts": "2026-01-01T10:00:06Z"
+    },
+    {
+      "type": "status",
+      "state": "ended",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:07Z"
+    }
+  ],
+  "error": [
+    {
+      "type": "error",
+      "code": "GEMINI_UNAVAILABLE",
+      "message": "The voice service is unavailable.",
+      "recoverable": true,
+      "ts": "2026-01-01T10:00:00Z"
+    },
+    {
+      "type": "status",
+      "state": "error",
+      "reason": "error",
+      "ts": "2026-01-01T10:00:00Z"
+    }
+  ],
+  "session_limit": [
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" },
+    {
+      "type": "status",
+      "state": "ending",
+      "reason": "session_limit",
+      "ts": "2026-01-01T10:15:00Z"
+    },
+    {
+      "type": "summary",
+      "summary": {
+        "customer_intent": "unclear",
+        "order_id": null,
+        "resolution_status": "unresolved",
+        "call_summary": "The call ended when the session limit was reached."
+      },
+      "ts": "2026-01-01T10:15:00Z"
+    },
+    {
+      "type": "status",
+      "state": "ended",
+      "reason": "session_limit",
+      "ts": "2026-01-01T10:15:00Z"
+    }
+  ],
+  "session_limit_without_summary": [
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" },
+    {
+      "type": "status",
+      "state": "ending",
+      "reason": "session_limit",
+      "ts": "2026-01-01T10:15:00Z"
+    },
+    {
+      "type": "status",
+      "state": "ended",
+      "reason": "session_limit",
+      "ts": "2026-01-01T10:15:00Z"
+    }
+  ],
+  "fatal_error": [
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" },
+    {
+      "type": "error",
+      "code": "INTERNAL",
+      "message": "The call ended unexpectedly.",
+      "recoverable": false,
+      "ts": "2026-01-01T10:00:01Z"
+    },
+    {
+      "type": "status",
+      "state": "error",
+      "reason": "error",
+      "ts": "2026-01-01T10:00:01Z"
+    }
+  ],
+  "recoverable_error": [
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" },
+    {
+      "type": "error",
+      "code": "BAD_MESSAGE",
+      "message": "A temporary message could not be processed.",
+      "recoverable": true,
+      "ts": "2026-01-01T10:00:01Z"
+    }
+  ],
+  "user_ended_no_summary": [
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" },
+    {
+      "type": "status",
+      "state": "ending",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:01Z"
+    },
+    {
+      "type": "status",
+      "state": "ended",
+      "reason": "user_ended",
+      "ts": "2026-01-01T10:00:02Z"
+    }
+  ]
 }
