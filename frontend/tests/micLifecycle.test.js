@@ -74,6 +74,39 @@ test("permission denial creates no socket, shows fixed error and releases contex
   assert.equal(shown, MICROPHONE_ERROR);
   assert.equal(closed, 1);
 });
+test("worklet load failure creates no socket, shows fixed error and releases context", async () => {
+  let opened = false;
+  let shown;
+  let closed = 0;
+  const context = {
+    state: "running",
+    audioWorklet: {
+      async addModule() {
+        throw new Error("worklet load failed");
+      },
+    },
+    close() {
+      closed++;
+      this.state = "closed";
+    },
+  };
+  const result = await acquireMicThenOpen({
+    getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }),
+    context,
+    loadWorklet: (audioContext) =>
+      audioContext.audioWorklet.addModule("/mic-worklet.js"),
+    openSocket: () => {
+      opened = true;
+    },
+    onError: (message) => {
+      shown = message;
+    },
+  });
+  assert.equal(result, null);
+  assert.equal(opened, false);
+  assert.equal(shown, MICROPHONE_ERROR);
+  assert.equal(closed, 1);
+});
 test("cleanup stops all tracks and disconnects source and worklet nodes", () => {
   let stops = 0;
   let disconnects = 0;

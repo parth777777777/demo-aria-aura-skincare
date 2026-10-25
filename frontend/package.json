@@ -8,8 +8,8 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "format": "prettier --write \"src/**/*\" \"tests/**/*\" --ignore-path .prettierignore",
-    "format:check": "prettier --check \"src/**/*\" \"tests/**/*\" --ignore-path .prettierignore"
+    "format": "prettier --write \"src/**/*\" \"tests/**/*\" \"public/**/*.js\" --ignore-path .prettierignore",
+    "format:check": "prettier --check \"src/**/*\" \"tests/**/*\" \"public/**/*.js\" --ignore-path .prettierignore"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

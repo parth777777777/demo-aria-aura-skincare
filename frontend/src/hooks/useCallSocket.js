@@ -73,9 +73,7 @@ export function useCallSocket(onEvent) {
       ),
       context,
       loadWorklet: (audioContext) =>
-        audioContext.audioWorklet.addModule(
-          new URL("../lib/micWorklet.js", import.meta.url),
-        ),
+        audioContext.audioWorklet.addModule("/mic-worklet.js"),
       openSocket: () => {
         socket = createCallSocket({
           url: import.meta.env.VITE_WS_URL,
