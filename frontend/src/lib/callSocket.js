@@ -62,6 +62,12 @@ export function createCallSocket({
         socket.send(JSON.stringify({ type: "end_call" }));
       }
     },
+    sendAudio(frame) {
+      if (socket?.readyState === WebSocketImpl.OPEN) socket.send(frame);
+    },
+    getWebSocket() {
+      return socket;
+    },
     close() {
       closed = true;
       if (socket && socket.readyState !== WebSocketImpl.CLOSED) socket.close();

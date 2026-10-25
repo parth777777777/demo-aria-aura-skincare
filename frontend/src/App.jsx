@@ -30,6 +30,7 @@ function App() {
     start: startCall,
     end: endCall,
     playTestTone,
+    stats: micStats,
   } = useCallSocket(dispatch);
   const replayEvents = useMemo(() => mockData?.lookup || [], [mockData]);
   const { startMockReplay, stopMockReplay } = useMockReplay(
@@ -190,6 +191,7 @@ function App() {
             sessionLimit={sessionLimit}
             transcriptRef={transcriptRef}
             debug={debug}
+            micStats={micStats}
           />
         </div>
       )}

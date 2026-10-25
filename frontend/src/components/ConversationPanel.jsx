@@ -21,6 +21,7 @@ export function ConversationPanel({
   sessionLimit,
   transcriptRef,
   debug,
+  micStats = { frames: 0, bytes: 0 },
 }) {
   return (
     <section
@@ -61,6 +62,9 @@ export function ConversationPanel({
           variant="destructive"
           className="mx-4 mt-4 w-auto min-w-0 max-w-[calc(100%-2rem)] text-[var(--error-ink)] [&_[data-slot=alert-description]]:text-current sm:mx-7"
         >
+          <div>
+            Microphone frames: {micStats.frames} · bytes sent: {micStats.bytes}
+          </div>
           <AlertCircle />
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
