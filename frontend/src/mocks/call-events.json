@@ -1,0 +1,18 @@
+{
+  "cancel": [
+    { "type": "status", "state": "connecting", "ts": "2026-01-01T10:00:00Z" },
+    { "type": "status", "state": "live", "ts": "2026-01-01T10:00:01Z" },
+    { "type": "transcript", "turn_id": "u1", "role": "user", "text": "Please cancel order ORD-103.", "final": true, "ts": "2026-01-01T10:00:04Z" },
+    { "type": "tool_call", "call_id": "c1", "name": "cancel_order", "args": { "order_id": "ORD-103" }, "ts": "2026-01-01T10:00:05Z" },
+    { "type": "tool_result", "call_id": "c1", "name": "cancel_order", "result": { "ok": false, "error": { "code": "CONFIRMATION_REQUIRED", "message": "Ask the customer to confirm cancellation." } }, "ts": "2026-01-01T10:00:05Z" },
+    { "type": "transcript", "turn_id": "a1", "role": "aria", "text": "I can help with that. Please confirm you want me to cancel ORD-103.", "final": true, "ts": "2026-01-01T10:00:07Z" },
+    { "type": "transcript", "turn_id": "u2", "role": "user", "text": "Yes, please cancel it.", "final": true, "ts": "2026-01-01T10:00:10Z" },
+    { "type": "tool_call", "call_id": "c2", "name": "cancel_order", "args": { "order_id": "ORD-103" }, "ts": "2026-01-01T10:00:11Z" },
+    { "type": "tool_result", "call_id": "c2", "name": "cancel_order", "result": { "ok": true, "order_id": "ORD-103", "status": "Cancelled" }, "ts": "2026-01-01T10:00:11Z" },
+    { "type": "transcript", "turn_id": "a2", "role": "aria", "text": "The backend confirmed that ORD-103 has been cancelled.", "final": true, "ts": "2026-01-01T10:00:13Z" },
+    { "type": "summary", "summary": { "customer_intent": "cancellation", "order_id": "ORD-103", "resolution_status": "resolved", "call_summary": "Customer requested cancellation of ORD-103, confirmed the request, and the backend reported success." }, "ts": "2026-01-01T10:00:15Z" },
+    { "type": "status", "state": "ended", "reason": "user_ended", "ts": "2026-01-01T10:00:15Z" }
+  ],
+  "error": [{ "type": "error", "code": "GEMINI_UNAVAILABLE", "message": "The voice service is unavailable.", "recoverable": true, "ts": "2026-01-01T10:00:00Z" }, { "type": "status", "state": "error", "reason": "error", "ts": "2026-01-01T10:00:00Z" }],
+  "session_limit": [{ "type": "status", "state": "live", "ts": "2026-01-01T10:00:00Z" }, { "type": "status", "state": "ending", "reason": "session_limit", "ts": "2026-01-01T10:15:00Z" }, { "type": "summary", "summary": { "customer_intent": "unclear", "order_id": null, "resolution_status": "unresolved", "call_summary": "The call ended when the session limit was reached." }, "ts": "2026-01-01T10:15:00Z" }, { "type": "status", "state": "ended", "reason": "session_limit", "ts": "2026-01-01T10:15:00Z" }]
+}
