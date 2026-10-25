@@ -147,5 +147,5 @@ order and clears its queue on `interrupted`.
 ## Runtime configuration
 
 `GEMINI_API_KEY` is backend-only. `GEMINI_LIVE_MODEL` defaults to
-`gemini-3.8-live`. Missing credentials fail `start_call` clearly; `/health`
+`gemini-3.1-flash-live-preview`. Missing credentials fail `start_call` clearly; `/health`
 does not require credentials. See `backend/.env.example` for abuse limits.

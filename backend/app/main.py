@@ -302,7 +302,7 @@ async def call_socket(websocket: WebSocket) -> None:
                     break
                 await emit("status", state="connecting")
                 try:
-                    call_model = _setting("GEMINI_LIVE_MODEL", "gemini-3.8-live")
+                    call_model = _setting("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
                     live = app.state.live_factory(key, call_model)
                     await live.connect()
                     config_field_names = getattr(live, "config_field_names", [

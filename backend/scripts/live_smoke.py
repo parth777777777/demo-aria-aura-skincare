@@ -36,7 +36,7 @@ async def main() -> None:
         key = os.getenv("GEMINI_API_KEY")
         if not key:
             raise SystemExit("Set GEMINI_API_KEY in backend/.env before running this manual test.")
-        model = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.8-live")
+        model = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
         print(f"model: {model}")
         session = GeminiLiveSession(key, model)
         service = OrderService()
