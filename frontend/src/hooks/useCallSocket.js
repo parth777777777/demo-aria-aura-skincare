@@ -6,6 +6,14 @@ import {
   createResampler,
   floatToPcm16,
 } from "../lib/pcmCapture.js";
+import {
+  acquireMicThenOpen,
+  cleanupMic,
+  createFrameGate,
+  createStartLock,
+  endMicCall,
+  onMicTrackEnded,
+} from "../lib/micLifecycle.js";
 
 export function useCallSocket(onEvent) {
   const eventRef = useRef(onEvent);
@@ -17,27 +25,27 @@ export function useCallSocket(onEvent) {
   const workletRef = useRef(null);
   const liveRef = useRef(false);
   const statsRef = useRef({ frames: 0, bytes: 0 });
+  const startLockRef = useRef(createStartLock());
   const [stats, setStats] = useState({ frames: 0, bytes: 0 });
   eventRef.current = onEvent;
 
   const disposeAudio = useCallback(() => {
     liveRef.current = false;
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    cleanupMic({
+      stream: streamRef.current,
+      source: sourceRef.current,
+      node: workletRef.current,
+      context: contextRef.current,
+    });
     streamRef.current = null;
-    sourceRef.current?.disconnect();
     sourceRef.current = null;
-    if (workletRef.current) {
-      workletRef.current.port.onmessage = null;
-      workletRef.current.port.close();
-      workletRef.current.disconnect();
-      workletRef.current = null;
-    }
+    workletRef.current = null;
     const player = playerRef.current;
     playerRef.current = null;
     contextRef.current = null;
     if (player) Promise.resolve(player.close()).catch(() => {});
   }, []);
-  const start = useCallback(async () => {
+  const startCall = useCallback(async () => {
     if (socketRef.current) return;
     let context;
     try {
@@ -58,52 +66,54 @@ export function useCallSocket(onEvent) {
       });
       return;
     }
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      streamRef.current = stream;
-      await context.audioWorklet.addModule(
-        new URL("../lib/micWorklet.js", import.meta.url),
-      );
-    } catch {
-      stream?.getTracks().forEach((track) => track.stop());
-      disposeAudio();
-      eventRef.current({
-        type: "error",
-        code: "MICROPHONE_REQUIRED",
-        message:
-          "Microphone access is needed to talk to Aria. Check your browser's permission and try again.",
-        recoverable: true,
-      });
-      return;
-    }
     let socket;
-    socket = createCallSocket({
-      url: import.meta.env.VITE_WS_URL,
-      onAudio: (data) => playerRef.current?.enqueue(data),
-      onEvent: (event) => {
-        if (socketRef.current !== socket) return;
-        if (event?.type === "interrupted") playerRef.current?.flush();
-        eventRef.current(event);
-        liveRef.current = event?.type === "status" && event.state === "live";
-        if (
-          event?.type === "connection_lost" ||
-          event?.type === "call_cancelled" ||
-          (event?.type === "status" && event.state === "ended") ||
-          (event?.type === "error" && event.recoverable === false)
-        ) {
-          socketRef.current = null;
-          disposeAudio();
-        }
+    const acquired = await acquireMicThenOpen({
+      getUserMedia: navigator.mediaDevices.getUserMedia.bind(
+        navigator.mediaDevices,
+      ),
+      context,
+      loadWorklet: (audioContext) =>
+        audioContext.audioWorklet.addModule(
+          new URL("../lib/micWorklet.js", import.meta.url),
+        ),
+      openSocket: () => {
+        socket = createCallSocket({
+          url: import.meta.env.VITE_WS_URL,
+          onAudio: (data) => playerRef.current?.enqueue(data),
+          onEvent: (event) => {
+            if (socketRef.current !== socket) return;
+            if (event?.type === "interrupted") playerRef.current?.flush();
+            eventRef.current(event);
+            liveRef.current =
+              event?.type === "status" && event.state === "live";
+            if (
+              event?.type === "connection_lost" ||
+              event?.type === "call_cancelled" ||
+              (event?.type === "status" && event.state === "ended") ||
+              (event?.type === "error" && event.recoverable === false)
+            ) {
+              socketRef.current = null;
+              disposeAudio();
+            }
+          },
+        });
+        return socket;
+      },
+      onError: (message) => {
+        eventRef.current({
+          type: "error",
+          code: "MICROPHONE_REQUIRED",
+          message,
+          recoverable: true,
+        });
       },
     });
+    if (!acquired) {
+      disposeAudio();
+      return;
+    }
+    const { stream } = acquired;
+    streamRef.current = stream;
     socketRef.current = socket;
     const source = context.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(context, "mic-capture");
@@ -111,46 +121,50 @@ export function useCallSocket(onEvent) {
     const framer = createFramer(320);
     sourceRef.current = source;
     workletRef.current = node;
-    node.port.onmessage = ({ data }) => {
-      for (const frame of framer.push(floatToPcm16(resampler.process(data)))) {
-        const ws = socket.getWebSocket?.();
-        if (
-          !liveRef.current ||
-          ws?.readyState !== WebSocket.OPEN ||
-          ws.bufferedAmount > 256 * 1024
-        )
-          continue;
-        ws.send(frame);
+    const sendFrame = createFrameGate({
+      getSocket: () => socket.getWebSocket?.(),
+      isLive: () => liveRef.current,
+      onSent: (frame) => {
         statsRef.current = {
           frames: statsRef.current.frames + 1,
           bytes: statsRef.current.bytes + frame.byteLength,
         };
         setStats({ ...statsRef.current });
+      },
+      openState: WebSocket.OPEN,
+    });
+    node.port.onmessage = ({ data }) => {
+      for (const frame of framer.push(floatToPcm16(resampler.process(data)))) {
+        sendFrame(frame);
       }
     };
     stream.getTracks().forEach((track) =>
-      track.addEventListener(
-        "ended",
-        () => {
-          eventRef.current({
-            type: "error",
-            code: "MICROPHONE_DISCONNECTED",
-            message: "Microphone disconnected.",
-            recoverable: true,
-          });
-          socket.end();
-          socketRef.current = null;
-          disposeAudio();
-        },
-        { once: true },
-      ),
+      onMicTrackEnded(track, () => {
+        eventRef.current({
+          type: "error",
+          code: "MICROPHONE_DISCONNECTED",
+          message: "Microphone disconnected.",
+          recoverable: true,
+        });
+        endMicCall({
+          socket,
+          cleanup: disposeAudio,
+          onEnded: () => {
+            socketRef.current = null;
+          },
+        });
+      }),
     );
     source.connect(node);
     socket.start();
   }, [disposeAudio]);
+  const start = useCallback(() => {
+    if (socketRef.current || startLockRef.current.starting)
+      return Promise.resolve();
+    return startLockRef.current.run(startCall);
+  }, [startCall]);
   const end = useCallback(() => {
-    socketRef.current?.end();
-    disposeAudio();
+    endMicCall({ socket: socketRef.current, cleanup: disposeAudio });
   }, [disposeAudio]);
 
   useEffect(
