@@ -1,8 +1,10 @@
 """Aura HTTP health endpoint and isolated per-connection call transport."""
 import asyncio
 import json
+import logging
 import os
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,8 @@ from app.domain.orders import OrderService
 from app.live.session import GeminiLiveSession
 from app.live.summary import DeterministicSummary
 from app.tools.registry import execute_tool
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 app = FastAPI(title="Aura Skincare API")
@@ -64,6 +68,15 @@ async def call_socket(websocket: WebSocket) -> None:
     ended = False
     audio_frames_forwarded = 0
     audio_bytes_forwarded = 0
+    binary_frames_received = 0
+    binary_bytes_received = 0
+    send_audio_successes = 0
+    send_audio_exceptions = 0
+    max_send_audio_duration_ms = 0.0
+    provider_event_count = 0
+    provider_field_counts: Counter[str] = Counter()
+    call_model = "unknown"
+    config_field_names: list[str] = []
 
     async def emit(event_type: str, **data: Any) -> None:
         async with lock:
@@ -100,12 +113,35 @@ async def call_socket(websocket: WebSocket) -> None:
             live_closed.set()
 
     async def _consume_provider_events() -> None:
-        nonlocal output_turn, output_text, user_turn
-        provider_event_count = 0
+        nonlocal output_turn, output_text, user_turn, provider_event_count
         async for event in live.events():
             if ended:
                 return
             provider_event_count += 1
+            content = _get(event, "server_content", "serverContent")
+            input_transcription = _get(content, "input_transcription", "inputTranscription") if content else None
+            output_transcription = _get(content, "output_transcription", "outputTranscription") if content else None
+            model_turn = _get(content, "model_turn", "modelTurn") if content else None
+            model_audio = any(
+                _get(_get(part, "inline_data", "inlineData"), "data")
+                for part in (_get(model_turn, "parts", default=[]) or [])
+            ) if model_turn else False
+            present_fields = [
+                name for name, value in (
+                    ("setup_complete", _get(event, "setup_complete", "setupComplete")),
+                    ("server_content", content),
+                    ("input_transcription", input_transcription),
+                    ("output_transcription", output_transcription),
+                    ("model_turn_audio", model_audio),
+                    ("tool_call", _get(event, "tool_call", "toolCall")),
+                    ("go_away", _get(event, "go_away", "goAway")),
+                    ("session_resumption_update", _get(event, "session_resumption_update", "sessionResumptionUpdate")),
+                ) if value
+            ]
+            provider_field_counts.update(present_fields)
+            if provider_event_count <= 10:
+                logger.info("provider event #%d present_fields=%s", provider_event_count, present_fields)
+            logger.info("provider event counts=%s", dict(provider_field_counts))
             if provider_event_count == 1:
                 await emit("provider_activity")
             cancellation = _get(event, "tool_call_cancellation", "toolCallCancellation")
@@ -216,9 +252,19 @@ async def call_socket(websocket: WebSocket) -> None:
                 break
             if message.get("bytes") is not None:
                 if live:
+                    binary_frames_received += 1
+                    binary_bytes_received += len(message["bytes"])
+                    send_started = time.perf_counter()
                     try:
                         await live.send_audio(message["bytes"])
-                    except Exception:
+                        send_audio_successes += 1
+                    except Exception as exc:
+                        send_audio_exceptions += 1
+                        error_message = str(exc)
+                        api_key = _setting("GEMINI_API_KEY", "")
+                        if api_key:
+                            error_message = error_message.replace(api_key, "[redacted]")
+                        logger.warning("send_audio failed: %s: %s", type(exc).__name__, error_message)
                         await emit(
                             "error",
                             code="GEMINI_INPUT_FAILED",
@@ -227,6 +273,11 @@ async def call_socket(websocket: WebSocket) -> None:
                         )
                         await finish("error")
                         break
+                    finally:
+                        duration_ms = (time.perf_counter() - send_started) * 1000
+                        max_send_audio_duration_ms = max(max_send_audio_duration_ms, duration_ms)
+                        if duration_ms > 250:
+                            logger.warning("slow send_audio duration_ms=%.2f", duration_ms)
                     audio_frames_forwarded += 1
                     audio_bytes_forwarded += len(message["bytes"])
                     if audio_frames_forwarded % 50 == 0:
@@ -251,8 +302,14 @@ async def call_socket(websocket: WebSocket) -> None:
                     break
                 await emit("status", state="connecting")
                 try:
-                    live = app.state.live_factory(key, _setting("GEMINI_LIVE_MODEL", "gemini-3.8-live"))
+                    call_model = _setting("GEMINI_LIVE_MODEL", "gemini-3.8-live")
+                    live = app.state.live_factory(key, call_model)
                     await live.connect()
+                    config_field_names = getattr(live, "config_field_names", [
+                        "response_modalities", "system_instruction", "tools",
+                        "input_audio_transcription", "output_audio_transcription",
+                    ])
+                    logger.info("websocket call connected model=%s live_config_fields=%s", call_model, config_field_names)
                     started = time.monotonic()
                     live_closed.clear()
                     await emit("status", state="live")
@@ -275,6 +332,14 @@ async def call_socket(websocket: WebSocket) -> None:
             except Exception:
                 pass
     finally:
+        logger.info(
+            "call summary model=%s config_fields=%s binary_frames_received=%d binary_bytes_received=%d "
+            "send_audio_successes=%d send_audio_exceptions=%d max_send_audio_duration_ms=%.2f "
+            "provider_events=%d provider_field_counts=%s",
+            call_model, config_field_names, binary_frames_received, binary_bytes_received,
+            send_audio_successes, send_audio_exceptions, max_send_audio_duration_ms,
+            provider_event_count, dict(provider_field_counts),
+        )
         if event_task is not None and not event_task.done():
             event_task.cancel()
             await asyncio.gather(event_task, return_exceptions=True)

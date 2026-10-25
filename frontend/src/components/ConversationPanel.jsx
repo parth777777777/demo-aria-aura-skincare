@@ -148,6 +148,17 @@ export function ConversationPanel({
                 </div>
               ))
             : "No tool events"}
+          <div>
+            Mic rejected: not live={micStats.rejected?.not_live ?? 0}, socket
+            closed={micStats.rejected?.socket_not_open ?? 0}, backpressure=
+            {micStats.rejected?.buffered_amount ?? 0}; bufferedAmount=
+            {micStats.bufferedAmount ?? 0}
+          </div>
+          <div>
+            Input transcripts={micStats.inputTranscripts ?? 0}, output
+            transcripts={micStats.outputTranscripts ?? 0}, audio bytes received=
+            {micStats.audioBytesReceived ?? 0}
+          </div>
         </div>
       )}
       <footer className="border-t border-border px-5 py-3 text-sm text-muted-foreground sm:px-[29px]">

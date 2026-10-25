@@ -1,10 +1,13 @@
 """Small SDK-facing Gemini Live session adapter."""
 
 from collections.abc import AsyncIterator
+import logging
 from typing import Any
 
 from app.live.prompt import ARIA_SYSTEM_PROMPT
 from app.tools.registry import get_tool_definitions
+
+logger = logging.getLogger(__name__)
 
 
 _SUPPORTED_SCHEMA_KEYS = frozenset({
@@ -52,6 +55,10 @@ class GeminiLiveSession:
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
         )
+        self.config_field_names = [
+            "response_modalities", "system_instruction", "tools",
+            "input_audio_transcription", "output_audio_transcription",
+        ]
         self._manager = client.aio.live.connect(model=self.model, config=config)
         self.session = await self._manager.__aenter__()
 
@@ -70,13 +77,19 @@ class GeminiLiveSession:
     async def events(self) -> AsyncIterator[Any]:
         # receive() yields one complete interaction, then returns. Keep the
         # session alive by starting another receive cycle for the next turn.
-        while True:
-            received = False
-            async for event in self.session.receive():
-                received = True
-                yield event
-            if not received:
-                raise RuntimeError("Gemini receive stream ended without an interaction")
+        try:
+            while True:
+                received = False
+                async for event in self.session.receive():
+                    received = True
+                    yield event
+                if not received:
+                    raise RuntimeError("Gemini receive stream ended without an interaction")
+        except BaseException as exc:
+            logger.info("Gemini events raised: %s: %s", type(exc).__name__, exc)
+            raise
+        finally:
+            logger.info("Gemini events iterator ended")
 
     async def close(self) -> None:
         if self._manager is not None:

@@ -195,7 +195,10 @@ def test_disconnect_cleans_up_live_session(monkeypatch):
     assert main.app.state.active_sessions == 0
 
 
-def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch):
+def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="app.main")
     instances = []
 
     class Recording(FakeLive):
@@ -222,6 +225,10 @@ def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch):
                 event = ws_receive_json(ws)
                 if event.get("state") == "ended":
                     break
+    assert "binary_frames_received=50" in caplog.text
+    assert "binary_bytes_received=32000" in caplog.text
+    assert "send_audio_successes=50" in caplog.text
+    assert "send_audio_exceptions=0" in caplog.text
 
 
 def test_live_receive_stream_ending_exits_websocket(monkeypatch):

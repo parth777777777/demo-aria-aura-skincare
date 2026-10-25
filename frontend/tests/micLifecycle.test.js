@@ -23,9 +23,15 @@ function socket(readyState = 1, bufferedAmount = 0) {
 
 test("mic gate drops frames before live", () => {
   const ws = socket();
-  const send = createFrameGate({ getSocket: () => ws, isLive: () => false });
+  const rejected = [];
+  const send = createFrameGate({
+    getSocket: () => ws,
+    isLive: () => false,
+    onRejected: (reason) => rejected.push(reason),
+  });
   assert.equal(send("frame"), false);
   assert.deepEqual(ws.sent, []);
+  assert.deepEqual(rejected, ["not_live"]);
 });
 test("mic gate sends frames while live and socket open", () => {
   const ws = socket();
@@ -35,15 +41,27 @@ test("mic gate sends frames while live and socket open", () => {
 });
 test("mic gate drops frames when socket is closed", () => {
   const ws = socket(3);
-  const send = createFrameGate({ getSocket: () => ws, isLive: () => true });
+  const rejected = [];
+  const send = createFrameGate({
+    getSocket: () => ws,
+    isLive: () => true,
+    onRejected: (reason) => rejected.push(reason),
+  });
   assert.equal(send("frame"), false);
   assert.deepEqual(ws.sent, []);
+  assert.deepEqual(rejected, ["socket_not_open"]);
 });
 test("mic gate drops frames above 256 KB backpressure", () => {
   const ws = socket(1, 256 * 1024 + 1);
-  const send = createFrameGate({ getSocket: () => ws, isLive: () => true });
+  const rejected = [];
+  const send = createFrameGate({
+    getSocket: () => ws,
+    isLive: () => true,
+    onRejected: (reason, amount) => rejected.push([reason, amount]),
+  });
   assert.equal(send("frame"), false);
   assert.deepEqual(ws.sent, []);
+  assert.deepEqual(rejected, [["buffered_amount", 256 * 1024 + 1]]);
 });
 test("permission denial creates no socket, shows fixed error and releases context", async () => {
   let opened = false;

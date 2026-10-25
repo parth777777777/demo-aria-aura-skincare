@@ -24,7 +24,15 @@ export function useCallSocket(onEvent) {
   const sourceRef = useRef(null);
   const workletRef = useRef(null);
   const liveRef = useRef(false);
-  const statsRef = useRef({ frames: 0, bytes: 0 });
+  const statsRef = useRef({
+    frames: 0,
+    bytes: 0,
+    rejected: { not_live: 0, socket_not_open: 0, buffered_amount: 0 },
+    bufferedAmount: 0,
+    inputTranscripts: 0,
+    outputTranscripts: 0,
+    audioBytesReceived: 0,
+  });
   const startLockRef = useRef(createStartLock());
   const [stats, setStats] = useState({ frames: 0, bytes: 0 });
   eventRef.current = onEvent;
@@ -47,6 +55,16 @@ export function useCallSocket(onEvent) {
   }, []);
   const startCall = useCallback(async () => {
     if (socketRef.current) return;
+    statsRef.current = {
+      frames: 0,
+      bytes: 0,
+      rejected: { not_live: 0, socket_not_open: 0, buffered_amount: 0 },
+      bufferedAmount: 0,
+      inputTranscripts: 0,
+      outputTranscripts: 0,
+      audioBytesReceived: 0,
+    };
+    setStats({ ...statsRef.current });
     let context;
     try {
       context = new AudioContext();
@@ -77,9 +95,21 @@ export function useCallSocket(onEvent) {
       openSocket: () => {
         socket = createCallSocket({
           url: import.meta.env.VITE_WS_URL,
-          onAudio: (data) => playerRef.current?.enqueue(data),
+          onAudio: (data) => {
+            statsRef.current.audioBytesReceived += data.byteLength;
+            setStats({ ...statsRef.current });
+            playerRef.current?.enqueue(data);
+          },
           onEvent: (event) => {
             if (socketRef.current !== socket) return;
+            if (event?.type === "transcript") {
+              const key =
+                event.role === "user"
+                  ? "inputTranscripts"
+                  : "outputTranscripts";
+              statsRef.current[key] += 1;
+              setStats({ ...statsRef.current });
+            }
             if (event?.type === "interrupted") playerRef.current?.flush();
             eventRef.current(event);
             liveRef.current =
@@ -123,11 +153,22 @@ export function useCallSocket(onEvent) {
       getSocket: () => socket.getWebSocket?.(),
       isLive: () => liveRef.current,
       onSent: (frame) => {
+        statsRef.current.bufferedAmount =
+          socket.getWebSocket()?.bufferedAmount ?? 0;
         statsRef.current = {
+          ...statsRef.current,
           frames: statsRef.current.frames + 1,
           bytes: statsRef.current.bytes + frame.byteLength,
         };
         setStats({ ...statsRef.current });
+      },
+      onRejected: (reason, bufferedAmount) => {
+        statsRef.current.rejected[reason] += 1;
+        statsRef.current.bufferedAmount = bufferedAmount;
+        setStats({
+          ...statsRef.current,
+          rejected: { ...statsRef.current.rejected },
+        });
       },
       openState: WebSocket.OPEN,
     });

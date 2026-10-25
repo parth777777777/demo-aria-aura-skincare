@@ -1,15 +1,26 @@
 export const MICROPHONE_ERROR =
   "Microphone access is needed to talk to Aria. Check your browser's permission and try again.";
 
-export function createFrameGate({ getSocket, isLive, onSent, openState = 1 }) {
+export function createFrameGate({
+  getSocket,
+  isLive,
+  onSent,
+  onRejected,
+  openState = 1,
+}) {
   return (frame) => {
     const socket = getSocket();
-    if (
-      !isLive() ||
-      socket?.readyState !== openState ||
-      socket.bufferedAmount > 256 * 1024
-    )
+    const reason = !isLive()
+      ? "not_live"
+      : socket?.readyState !== openState
+        ? "socket_not_open"
+        : socket.bufferedAmount > 256 * 1024
+          ? "buffered_amount"
+          : null;
+    if (reason) {
+      onRejected?.(reason, socket?.bufferedAmount ?? 0);
       return false;
+    }
     socket.send(frame);
     onSent?.(frame);
     return true;
