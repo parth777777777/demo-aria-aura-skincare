@@ -58,7 +58,9 @@ export function getVisibleNotice({ error, status, turnCount = 0 }) {
   const errorMessage =
     status?.state === "ended"
       ? null
-      : error?.recoverable === true && turnCount > 0
+      : error?.recoverable === true &&
+          turnCount > 0 &&
+          error.code !== "AUDIO_BLOCKED"
         ? null
         : error?.message ||
           (status?.reason === "error" ? "This call ended unexpectedly." : null);

@@ -24,6 +24,7 @@ export function CallPanel({
   scenario,
   ScenarioPicker,
   runScenario,
+  playTestTone,
 }) {
   return (
     <section
@@ -89,9 +90,7 @@ export function CallPanel({
           <Button
             className="h-[52px] w-full rounded-full text-base"
             variant={callActive ? "destructive" : "default"}
-            onClick={
-              runCall
-            }
+            onClick={runCall}
           >
             {callActive ? (
               <>
@@ -113,6 +112,15 @@ export function CallPanel({
             runReplay={runReplay}
             runScenario={runScenario}
           />
+        )}
+        {import.meta.env.DEV && (
+          <Button
+            variant="outline"
+            className="mt-2 w-full"
+            onClick={playTestTone}
+          >
+            Play test tone
+          </Button>
         )}
       </div>
     </section>

@@ -26,7 +26,11 @@ function App() {
   const copyTimer = useRef(null);
   const transcriptRef = useRef(null);
   const voiceState = selectVoiceState(state);
-  const { start: startCall, end: endCall } = useCallSocket(dispatch);
+  const {
+    start: startCall,
+    end: endCall,
+    playTestTone,
+  } = useCallSocket(dispatch);
   const replayEvents = useMemo(() => mockData?.lookup || [], [mockData]);
   const { startMockReplay, stopMockReplay } = useMockReplay(
     dispatch,
@@ -177,6 +181,7 @@ function App() {
             scenario={scenario}
             ScenarioPicker={ScenarioPicker}
             runScenario={runScenario}
+            playTestTone={playTestTone}
           />
           <ConversationPanel
             state={state}

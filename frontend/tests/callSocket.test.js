@@ -19,18 +19,32 @@ class FakeWebSocket {
   emit(type, data) {
     for (const callback of this.listeners[type] || []) callback({ data });
   }
-  open() { this.readyState = FakeWebSocket.OPEN; this.emit("open"); }
-  send(data) { this.sent.push(data); }
-  close() { this.readyState = FakeWebSocket.CLOSED; this.emit("close"); }
+  open() {
+    this.readyState = FakeWebSocket.OPEN;
+    this.emit("open");
+  }
+  send(data) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.emit("close");
+  }
 }
 
-const make = () => {
+const make = (onAudio = () => {}) => {
   const events = [];
-  const client = createCallSocket({ url: "ws://test/ws/call", onEvent: (event) => events.push(event), WebSocketImpl: FakeWebSocket });
+  const client = createCallSocket({
+    url: "ws://test/ws/call",
+    onEvent: (event) => events.push(event),
+    onAudio,
+    WebSocketImpl: FakeWebSocket,
+  });
   client.start();
   return { client, events, socket: FakeWebSocket.instance };
 };
-const sendEvent = (socket, event) => socket.emit("message", JSON.stringify(event));
+const sendEvent = (socket, event) =>
+  socket.emit("message", JSON.stringify(event));
 
 test("start sends start_call exactly once", () => {
   const { client, events, socket } = make();
@@ -54,17 +68,32 @@ test("malformed JSON is ignored", () => {
   assert.deepEqual(events, []);
 });
 
-test("binary frames are ignored", () => {
-  const { events, socket } = make();
-  socket.emit("message", new ArrayBuffer(2));
+test("binary frames are forwarded to onAudio", () => {
+  const audio = [];
+  const { events, socket } = make((frame) => audio.push(frame));
+  const frame = new ArrayBuffer(2);
+  socket.emit("message", frame);
   assert.deepEqual(events, []);
+  assert.deepEqual(audio, [frame]);
+  assert.equal(socket.binaryType, "arraybuffer");
+});
+
+test("disposed sockets ignore binary frames", () => {
+  const audio = [];
+  const { client, socket } = make((frame) => audio.push(frame));
+  client.close();
+  socket.emit("message", new ArrayBuffer(2));
+  assert.deepEqual(audio, []);
 });
 
 test("end sends end_call only while open", () => {
   const { client, socket } = make();
   socket.open();
   client.end();
-  assert.deepEqual(socket.sent, ['{"type":"start_call"}', '{"type":"end_call"}']);
+  assert.deepEqual(socket.sent, [
+    '{"type":"start_call"}',
+    '{"type":"end_call"}',
+  ]);
 });
 
 test("bare close reports connection lost", () => {
@@ -98,7 +127,11 @@ test("error then close reports exactly one connection_lost", () => {
 
 test("close while idle or never started reports no connection_lost", () => {
   const events = [];
-  const client = createCallSocket({ url: "ws://test/ws/call", onEvent: (event) => events.push(event), WebSocketImpl: FakeWebSocket });
+  const client = createCallSocket({
+    url: "ws://test/ws/call",
+    onEvent: (event) => events.push(event),
+    WebSocketImpl: FakeWebSocket,
+  });
   client.close();
   client.start();
   assert.deepEqual(events, []);

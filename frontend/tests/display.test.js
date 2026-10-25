@@ -96,6 +96,21 @@ test("shows recoverable notices until a call ends or transcript arrives, fatal n
   );
 });
 
+test("keeps the audio-blocked notice visible after transcript events", () => {
+  assert.equal(
+    getVisibleNotice({
+      error: {
+        code: "AUDIO_BLOCKED",
+        message: "Audio playback is blocked by your browser.",
+        recoverable: true,
+      },
+      status: { state: "live" },
+      turnCount: 3,
+    }).errorMessage,
+    "Audio playback is blocked by your browser.",
+  );
+});
+
 test("derives order card fields only from successful detail results", () => {
   assert.deepEqual(
     getOrderCardData({

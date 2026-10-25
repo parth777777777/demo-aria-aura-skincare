@@ -1,4 +1,9 @@
-export function createCallSocket({ url, onEvent, WebSocketImpl = WebSocket }) {
+export function createCallSocket({
+  url,
+  onEvent,
+  onAudio = () => {},
+  WebSocketImpl = WebSocket,
+}) {
   let socket = null;
   let started = false;
   let ended = false;
@@ -16,13 +21,14 @@ export function createCallSocket({ url, onEvent, WebSocketImpl = WebSocket }) {
       if (started || closed) return;
       started = true;
       socket = new WebSocketImpl(url);
+      socket.binaryType = "arraybuffer";
       socket.addEventListener("open", () => {
         if (!closed) socket.send(JSON.stringify({ type: "start_call" }));
       });
       socket.addEventListener("message", (message) => {
         if (closed) return;
         if (typeof message.data !== "string") {
-          // F2b: handle binary audio frames here.
+          onAudio(message.data);
           return;
         }
         let event;
@@ -32,7 +38,8 @@ export function createCallSocket({ url, onEvent, WebSocketImpl = WebSocket }) {
           return;
         }
         if (event?.type === "status" && event.state === "ended") ended = true;
-        if (event?.type === "error" && event.recoverable === false) fatalError = true;
+        if (event?.type === "error" && event.recoverable === false)
+          fatalError = true;
         onEvent(event);
       });
       socket.addEventListener("close", () => {
