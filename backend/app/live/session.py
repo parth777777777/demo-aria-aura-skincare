@@ -86,7 +86,7 @@ class GeminiLiveSession:
                 if not received:
                     raise RuntimeError("Gemini receive stream ended without an interaction")
         except BaseException as exc:
-            logger.info("Gemini events raised: %s: %s", type(exc).__name__, exc)
+            logger.info("Gemini events raised: %s", type(exc).__name__)
             raise
         finally:
             logger.info("Gemini events iterator ended")
