@@ -68,8 +68,15 @@ class GeminiLiveSession:
             id=call_id, name=name, response=result)])
 
     async def events(self) -> AsyncIterator[Any]:
-        async for event in self.session.receive():
-            yield event
+        # receive() yields one complete interaction, then returns. Keep the
+        # session alive by starting another receive cycle for the next turn.
+        while True:
+            received = False
+            async for event in self.session.receive():
+                received = True
+                yield event
+            if not received:
+                raise RuntimeError("Gemini receive stream ended without an interaction")
 
     async def close(self) -> None:
         if self._manager is not None:

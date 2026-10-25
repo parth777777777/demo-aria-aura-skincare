@@ -236,6 +236,26 @@ test("selector returns connecting", () =>
   ));
 test("selector returns listening", () =>
   assert.equal(selectVoiceState(liveState()), "listening"));
+test("final user transcript selects thinking until Aria starts responding", () => {
+  const waiting = callReducer(
+    liveState(),
+    transcript("u1", "user", "Where is my order?", true),
+  );
+  assert.equal(selectVoiceState(waiting), "thinking");
+  const responding = callReducer(
+    waiting,
+    transcript("a1", "aria", "I can check that.", false),
+  );
+  assert.equal(selectVoiceState(responding), "speaking");
+});
+test("audio forwarding acknowledgments and provider activity are recorded", () => {
+  const state = apply([
+    { type: "audio_forwarded", frames: 50, bytes: 32000 },
+    { type: "provider_activity" },
+  ]);
+  assert.deepEqual(state.audioForwarded, { frames: 50, bytes: 32000 });
+  assert.equal(state.providerActivity, true);
+});
 test("selector returns thinking for a pending tool call", () =>
   assert.equal(
     selectVoiceState(

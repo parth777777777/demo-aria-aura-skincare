@@ -22,6 +22,8 @@ export function ConversationPanel({
   transcriptRef,
   debug,
   micStats = { frames: 0, bytes: 0 },
+  audioForwarded = { frames: 0, bytes: 0 },
+  providerActivity = false,
 }) {
   return (
     <section
@@ -149,7 +151,14 @@ export function ConversationPanel({
         </div>
       )}
       <footer className="border-t border-border px-5 py-3 text-sm text-muted-foreground sm:px-[29px]">
-        Aria answers questions about Aura orders. Sample data shown.
+        <div>Aria answers questions about Aura orders. Sample data shown.</div>
+        {state.status.state === "live" && (
+          <div className="mt-2 text-xs" aria-live="polite">
+            Mic sent: {micStats.frames} frames · Backend forwarded:{" "}
+            {audioForwarded.frames} frames · Gemini activity:{" "}
+            {providerActivity ? "observed" : "waiting"}
+          </div>
+        )}
       </footer>
     </section>
   );

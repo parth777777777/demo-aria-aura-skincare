@@ -74,6 +74,38 @@ def test_send_text_uses_client_content_with_explicit_user_role():
     asyncio.run(exercise())
 
 
+def test_events_receives_successive_complete_interactions_and_tool_followup():
+    class SDKSession:
+        def __init__(self):
+            self.cycles = 0
+            self.responses = []
+
+        async def receive(self):
+            self.cycles += 1
+            if self.cycles == 1:
+                yield "function-call"
+            elif self.cycles == 2:
+                yield "tool-follow-up"
+            else:
+                raise RuntimeError("stop after regression assertions")
+
+        async def send_tool_response(self, **kwargs):
+            self.responses.append(kwargs)
+
+    async def exercise():
+        wrapper = GeminiLiveSession("unused", "unused")
+        wrapper.session = SDKSession()
+        events = wrapper.events()
+        assert await anext(events) == "function-call"
+        await wrapper.send_tool_response("call-1", "get_order_details", {"ok": True})
+        assert await anext(events) == "tool-follow-up"
+        assert wrapper.session.cycles == 2
+        assert len(wrapper.session.responses) == 1
+        await events.aclose()
+
+    asyncio.run(exercise())
+
+
 def test_prompt_contains_policy_boundaries_and_windows():
     prompt = " ".join(ARIA_SYSTEM_PROMPT.split())
     for fact in ("₹499", "3–5", "7 days", "48 hours", "₹2,500"):
@@ -107,8 +139,7 @@ def test_ws_start_errors_malformed_session_active_audio_transcripts_tools_cancel
             await super().send_audio(data)
             await self.queue.put(NS(server_content=NS(interim_input_transcription=NS(text="hel"), input_transcription=NS(text="hello"), output_transcription=NS(text="Hi "), model_turn=None, turn_complete=False, interrupted=False)))
             await self.queue.put(NS(server_content=NS(output_transcription=NS(text="there"), model_turn=None, turn_complete=True, interrupted=False)))
-            await self.queue.put(NS(tool_call=NS(function_calls=[NS(id="call-1", name="get_order_details", args={"order_id":"ORD-103"}), NS(id="cancelled", name="get_order_details", args={"order_id":"ORD-101"})])))
-            await self.queue.put(NS(tool_call_cancellation=NS(ids=["cancelled"])))
+            await self.queue.put(NS(tool_call=NS(function_calls=[NS(id="call-1", name="get_order_details", args={"order_id":"ORD-103"}), NS(id="cancelled", name="get_order_details", args={"order_id":"ORD-101"})]), tool_call_cancellation=NS(ids=["cancelled"])))
             await self.queue.put(NS(go_away=NS(time_left="1s")))
     monkeypatch.setattr(main.app.state, "live_factory", Scripted)
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
@@ -162,6 +193,35 @@ def test_disconnect_cleans_up_live_session(monkeypatch):
     assert instances[0].closed
     assert instances[0].cancelled
     assert main.app.state.active_sessions == 0
+
+
+def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch):
+    instances = []
+
+    class Recording(FakeLive):
+        def __init__(self, *args):
+            super().__init__(*args)
+            instances.append(self)
+
+    monkeypatch.setattr(main.app.state, "live_factory", Recording)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws)
+            ws_receive_json(ws)
+            for _ in range(50):
+                ws.send_bytes(b"x" * 640)
+            acknowledgment = ws_receive_json(ws, timeout=2)
+            assert acknowledgment["type"] == "audio_forwarded"
+            assert acknowledgment["frames"] == 50
+            assert acknowledgment["bytes"] == 32000
+            assert len(instances[0].audio) == 50
+            ws.send_text('{"type":"end_call"}')
+            while True:
+                event = ws_receive_json(ws)
+                if event.get("state") == "ended":
+                    break
 
 
 def test_live_receive_stream_ending_exits_websocket(monkeypatch):

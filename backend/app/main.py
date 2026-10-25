@@ -62,6 +62,8 @@ async def call_socket(websocket: WebSocket) -> None:
     output_turn = 0
     output_text = ""
     ended = False
+    audio_frames_forwarded = 0
+    audio_bytes_forwarded = 0
 
     async def emit(event_type: str, **data: Any) -> None:
         async with lock:
@@ -99,17 +101,16 @@ async def call_socket(websocket: WebSocket) -> None:
 
     async def _consume_provider_events() -> None:
         nonlocal output_turn, output_text, user_turn
-        pending_calls: dict[str, Any] = {}
+        provider_event_count = 0
         async for event in live.events():
             if ended:
                 return
+            provider_event_count += 1
+            if provider_event_count == 1:
+                await emit("provider_activity")
             cancellation = _get(event, "tool_call_cancellation", "toolCallCancellation")
             cancelled = _get(cancellation, "ids", default=[]) or [] if cancellation else []
             cancelled_ids.update(cancelled)
-            for pending_id, pending_call in list(pending_calls.items()):
-                if pending_id not in cancelled_ids:
-                    await dispatch_tool(pending_id, pending_call)
-                pending_calls.pop(pending_id, None)
             content = _get(event, "server_content", "serverContent")
             if content:
                 interim = _get(content, "interim_input_transcription", "interimInputTranscription")
@@ -152,11 +153,8 @@ async def call_socket(websocket: WebSocket) -> None:
                     call_id = _get(call, "id")
                     if not call_id or call_id in cancelled_ids:
                         continue
-                    pending_calls[call_id] = call
+                    await dispatch_tool(call_id, call)
             if _get(event, "go_away", "goAway"):
-                for pending_id, pending_call in pending_calls.items():
-                    if pending_id not in cancelled_ids:
-                        await dispatch_tool(pending_id, pending_call)
                 await finish("session_limit")
                 return
 
@@ -218,7 +216,21 @@ async def call_socket(websocket: WebSocket) -> None:
                 break
             if message.get("bytes") is not None:
                 if live:
-                    await live.send_audio(message["bytes"])
+                    try:
+                        await live.send_audio(message["bytes"])
+                    except Exception:
+                        await emit(
+                            "error",
+                            code="GEMINI_INPUT_FAILED",
+                            message="Audio could not be forwarded to Gemini. Please restart the call.",
+                            recoverable=False,
+                        )
+                        await finish("error")
+                        break
+                    audio_frames_forwarded += 1
+                    audio_bytes_forwarded += len(message["bytes"])
+                    if audio_frames_forwarded % 50 == 0:
+                        await emit("audio_forwarded", frames=audio_frames_forwarded, bytes=audio_bytes_forwarded)
                 continue
             raw = message.get("text")
             try:

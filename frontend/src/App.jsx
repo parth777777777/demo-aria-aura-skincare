@@ -192,6 +192,8 @@ function App() {
             transcriptRef={transcriptRef}
             debug={debug}
             micStats={micStats}
+            audioForwarded={state.audioForwarded}
+            providerActivity={state.providerActivity}
           />
         </div>
       )}

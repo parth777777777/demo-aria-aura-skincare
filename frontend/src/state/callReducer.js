@@ -5,6 +5,8 @@ export const initialCallState = {
   summary: null,
   error: null,
   interrupted: false,
+  audioForwarded: { frames: 0, bytes: 0 },
+  providerActivity: false,
 };
 
 export function callReducer(state = initialCallState, event) {
@@ -35,6 +37,16 @@ export function callReducer(state = initialCallState, event) {
         ...state,
         status: { state: event.state, reason: event.reason ?? null },
       };
+    case "audio_forwarded":
+      return {
+        ...state,
+        audioForwarded: {
+          frames: Number(event.frames) || 0,
+          bytes: Number(event.bytes) || 0,
+        },
+      };
+    case "provider_activity":
+      return { ...state, providerActivity: true };
     case "transcript": {
       if (typeof event.turn_id !== "string") return state;
       const turn = {
