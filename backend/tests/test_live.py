@@ -114,6 +114,9 @@ def test_prompt_contains_policy_boundaries_and_windows():
     assert "do not ask for verbal confirmation before that first tool call" in prompt
     assert "Only after a clear yes in a later turn, call the same tool again" in prompt
     assert "Never say" in prompt and "ok true" in prompt
+    assert "State policy facts only from the policy text and tool results" in prompt
+    assert "do not invent details" in prompt
+    assert "Never guess, complete, or infer an order ID" in prompt
 
 
 def test_summary_validation_and_most_recent_successful_order():
