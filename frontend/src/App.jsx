@@ -11,6 +11,7 @@ import { CallPanel } from "./components/CallPanel.jsx";
 import { ConversationPanel } from "./components/ConversationPanel.jsx";
 import { DemoAccountPage } from "./components/DemoAccountPage.jsx";
 import { Button } from "@/components/ui/button";
+import { HoverBorderGradient } from "@/components/ui/hover-border-gradient.jsx";
 
 const summaryKeys = [
   "customer_intent",
@@ -156,6 +157,24 @@ function App() {
     copyTimer.current = window.setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleHeaderAction = () => {
+    if (route !== "call") {
+      window.location.hash = "#/";
+      setRoute("call");
+    } else if (demoName) {
+      try {
+        sessionStorage.removeItem("aura.demoIdentity.credential");
+        sessionStorage.removeItem("aura.demoIdentity.displayName");
+      } catch {
+        /* unavailable storage */
+      }
+      setDemoName("");
+    } else {
+      window.location.hash = "#/demo-account";
+      setRoute("demo-account");
+    }
+  };
+
   return (
     <main className="min-h-screen bg-[#f7f6f0] px-3 py-3 sm:px-6 sm:py-6 2xl:px-16 2xl:py-[30px]">
       <div
@@ -174,39 +193,30 @@ function App() {
               Personal care, personally.
             </span>
           </a>
-          <Button
-            variant="ghost"
-            className="shrink-0 rounded-full text-sm font-medium"
-            onClick={() => {
-              if (route !== "call") {
-                window.location.hash = "#/";
-                setRoute("call");
-              } else if (demoName) {
-                try {
-                  sessionStorage.removeItem("aura.demoIdentity.credential");
-                  sessionStorage.removeItem("aura.demoIdentity.displayName");
-                } catch {
-                  /* unavailable storage */
-                }
-                setDemoName("");
-              } else {
-                window.location.hash = "#/demo-account";
-                setRoute("demo-account");
-              }
-            }}
-          >
-            {route === "call" ? (
-              demoName ? (
+          {route === "call" && !demoName ? (
+            <HoverBorderGradient
+              type="button"
+              onClick={handleHeaderAction}
+              containerClassName="shrink-0 rounded-full border-transparent bg-transparent p-[2px] shadow-[0_0_16px_rgba(83,245,210,0.24)] transition-shadow hover:shadow-[0_0_24px_rgba(217,255,88,0.5)] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+              className="rounded-full bg-[#f1f8e8] px-4 py-2 text-sm font-semibold text-[#20392b] transition-colors hover:bg-white"
+            >
+              Create demo account
+            </HoverBorderGradient>
+          ) : (
+            <Button
+              variant="ghost"
+              className="shrink-0 rounded-full text-sm font-medium"
+              onClick={handleHeaderAction}
+            >
+              {demoName && route === "call" ? (
                 <>Demo identity: {demoName} · Reset</>
               ) : (
-                "Create demo account"
-              )
-            ) : (
-              <>
-                <ArrowLeft data-icon="inline-start" /> Back to conversation
-              </>
-            )}
-          </Button>
+                <>
+                  <ArrowLeft data-icon="inline-start" /> Back to conversation
+                </>
+              )}
+            </Button>
+          )}
         </header>
         {route === "demo-account" ? (
           <div className="flex-1 p-4 sm:p-8">
