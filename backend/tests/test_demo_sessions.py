@@ -68,6 +68,65 @@ def test_demo_account_and_mock_context_sessions_are_mode_isolated():
     assert store.authorize(account_token, expected_mode="account")["conversation_context"] == {}
 
 
+def test_temporary_account_orders_are_owned_and_cannot_be_written_via_mock_token():
+    store = DemoSessionStore()
+    alice, _ = store.create("Alice")
+    bob, _ = store.create("Bob")
+    mock, _ = store.create_mock_context()
+    alice_orders = [{"order_id": "ORD-201", "items": ["Serum"], "status": "Processing"}]
+
+    assert store.replace_account_orders(alice, alice_orders)
+    assert store.replace_account_orders(bob, [])
+    assert not store.replace_account_orders(mock, alice_orders)
+    assert store.list_account_orders(alice) == alice_orders
+    assert store.list_account_orders(bob) == []
+    # Returned data is a copy; another identity cannot mutate Alice's state.
+    bob_data = store.list_account_orders(bob)
+    bob_data.append({"order_id": "ORD-201"})
+    assert store.list_account_orders(alice) == alice_orders
+
+
+def test_temporary_account_carts_are_owned_and_cannot_be_written_via_mock_token():
+    store = DemoSessionStore()
+    alice, _ = store.create("Alice")
+    bob, _ = store.create("Bob")
+    mock, _ = store.create_mock_context()
+    alice_carts = [{"cart_id": "CART-000001", "total_inr": 548}]
+
+    assert store.replace_account_carts(alice, alice_carts)
+    assert store.replace_account_carts(bob, [])
+    assert not store.replace_account_carts(mock, alice_carts)
+    assert store.authorize(alice, expected_mode="account")["carts"] == alice_carts
+    assert store.authorize(bob, expected_mode="account")["carts"] == []
+    copied = store.authorize(alice)["carts"]
+    copied.clear()
+    assert store.authorize(alice)["carts"] == alice_carts
+
+
+def test_account_carts_survive_authorization_cycles_but_not_expiry_or_restart():
+    now = [0.0]
+    store = DemoSessionStore(idle_timeout_seconds=30, clock=lambda: now[0])
+    credential, _ = store.create("Alice")
+    cart = {"cart_id": "CART-000001", "items": [], "total_inr": 0}
+    assert store.replace_account_carts(credential, [cart])
+    assert store.authorize(credential)["carts"] == [cart]
+    now[0] = 30.0
+    assert store.authorize(credential) is None
+    assert DemoSessionStore().authorize(credential) is None
+
+
+def test_account_owned_orders_survive_calls_but_not_expiry_or_store_restart():
+    now = [0.0]
+    first_store = DemoSessionStore(idle_timeout_seconds=30, clock=lambda: now[0])
+    credential, _ = first_store.create("Alice")
+    order = {"order_id": "ORD-201", "items": ["Serum"], "status": "Processing"}
+    assert first_store.replace_account_orders(credential, [order])
+    assert first_store.list_account_orders(credential) == [order]
+    now[0] = 30.0
+    assert first_store.list_account_orders(credential) is None
+    assert DemoSessionStore().authorize(credential) is None
+
+
 def test_create_demo_session_validates_name_and_disables_caching(monkeypatch):
     monkeypatch.setattr(main.app.state, "demo_session_store", DemoSessionStore())
     with TestClient(main.app) as client:

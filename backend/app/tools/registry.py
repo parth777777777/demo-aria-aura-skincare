@@ -34,6 +34,8 @@ def _schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
             "additionalProperties": False}
 
 _DEFINITIONS = (
+    {"name": "list_order_carts", "description": "List carts in the active authorized session. Account-mode carts may have been created during an earlier call; only place a cart marked ready after confirming its current details.",
+     "parameters": _schema({}, [])},
     {"name": "list_orders", "description": "List every order in the active authorized data source. Mock DB results are the sample demo dataset, not the caller's personal orders.",
      "parameters": _schema({}, [])},
     {"name": "resolve_order_reference", "description": "Resolve a concise product or order reference such as 'vitamin C' against the active authorized orders. Use the result only when match_status is matched; ask the customer to clarify ambiguous or missing matches.",
@@ -59,7 +61,7 @@ _SUPPORTED = {definition["name"] for definition in _DEFINITIONS}
 def _validate(name: str, arguments: Any) -> dict[str, Any]:
     if not isinstance(arguments, Mapping):
         raise ToolArgumentError("Arguments must be a JSON object.")
-    if name == "list_orders":
+    if name in {"list_orders", "list_order_carts"}:
         allowed = set()
     elif name == "resolve_order_reference":
         allowed = {"reference"}
@@ -100,7 +102,7 @@ def _validate(name: str, arguments: Any) -> dict[str, Any]:
         if not isinstance(method, str) or method not in ("COD", "PREPAID"):
             raise ToolArgumentError("payment_method must be COD or PREPAID.")
         return {"items": cleaned, "payment_method": method}
-    if name == "list_orders":
+    if name in {"list_orders", "list_order_carts"}:
         return {}
     if name == "resolve_order_reference":
         reference = arguments.get("reference")
@@ -187,6 +189,8 @@ def execute_tool(service: OrderService, name: str, arguments: Any, *,
         if order_source == "mock_db_sample_data":
             result["notice"] = "These are sample demo orders and are not associated with a personal identity."
         return result
+    if name == "list_order_carts":
+        return {"ok": True, "carts": service.list_carts()}
     if name == "resolve_order_reference":
         candidates = order_candidates if order_candidates is not None else service.list_orders()
         result = resolve_order_reference(
@@ -222,6 +226,9 @@ def execute_tool(service: OrderService, name: str, arguments: Any, *,
             "total_inr": order["total_inr"],
         }
     else:
+        placed_order = service.get_placed_order(validated["cart_id"])
+        if placed_order is not None:
+            return {"ok": True, "order": placed_order, "idempotent": True}
         cart_result = service.get_cart_details(validated["cart_id"])
         if not cart_result["ok"]:
             return cart_result

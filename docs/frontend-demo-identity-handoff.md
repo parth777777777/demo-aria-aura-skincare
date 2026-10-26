@@ -122,11 +122,16 @@ backend WebSocket URL; production deployments need the frontend origin in both
   `MOCK_SESSION_INVALID`; clear the stale context ID and call
   `POST /api/mock-sessions` again. Do not send the account credential in Mock DB
   mode.
-- Account-mode order listing and natural-reference resolution are available,
-  but the account order list is currently empty until account order creation is
-  implemented. Account-mode cancellation, inventory, cart, and order placement
-  are not implemented; those tool calls return `ACCOUNT_FEATURES_NOT_READY`.
-  Do not present those mutations/commerce features as working yet. Mock DB mode
+- Account-mode listing, lookup, reference resolution, eligibility, and confirmed
+  cancellation are scoped to the temporary identity's own orders. New identities
+  start empty; orders appear after account-mode placement is implemented. Guessed
+  IDs from Mock DB or another account return the same `NOT_FOUND` as unknown IDs.
+  `build_order_cart` is available in Stage 4A: it uses backend catalog prices and
+  saves temporary carts to the authorized identity across calls. Other identities
+  and Mock DB mode cannot access those carts. Account `place_order` now uses
+  action-bound spoken confirmation and creates a simulated identity-owned order;
+  it does not collect payment or initiate fulfilment. A changed catalog price
+  fails closed and requires a newly built cart and fresh confirmation. Mock DB mode
   lists the three sample fixture orders, clearly labeled as demo data.
 - Identity creation is currently public and has no rate limit. This is an
   assessment/demo feature, not a production authentication or abuse-control
@@ -216,5 +221,5 @@ or infer consent from transcript text.
 - [ ] Failed/stale/expired confirmation results never show action success.
 - [ ] No frontend turn counter or transcript-based local authorization is added;
       natural confirmation remains in the voice/backend tool flow.
-- [ ] Account-mode confirmation UI remains gated until account-mode mutation
-      tools are implemented by a later backend slice.
+- [ ] Account-mode cancellation and simulated placement use backend tool results;
+      the frontend must not infer authorization or confirmation success locally.

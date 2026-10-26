@@ -7,8 +7,9 @@ import secrets
 import time
 import uuid
 from copy import deepcopy
+from contextlib import contextmanager
 from threading import RLock
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 class DemoSessionStore:
@@ -66,6 +67,7 @@ class DemoSessionStore:
             "last_activity": now,
             "conversation_context": {},
             "orders": [],
+            "carts": [],
         }
         with self._lock:
             self._remove_expired(now)
@@ -88,12 +90,59 @@ class DemoSessionStore:
             session["last_activity"] = now
             return deepcopy(session)
 
+    @contextmanager
+    def account_transaction(self, credential: str) -> Iterator[dict[str, Any] | None]:
+        """Serialize one account operation and its state writeback in-process.
+
+        The store lock is re-entrant so callers can authorize and replace state
+        while the transaction is held. Do not await while using this context.
+        """
+        self._lock.acquire()
+        try:
+            yield self.authorize(credential, expected_mode="account")
+        finally:
+            self._lock.release()
+
     def list_account_orders(self, credential: str) -> list[dict[str, Any]] | None:
         """Return only orders owned by the authorized temporary account."""
         session = self.authorize(credential, expected_mode="account")
         if session is None:
             return None
         return deepcopy(session["orders"])
+
+    def replace_account_orders(self, credential: str, orders: list[dict[str, Any]]) -> bool:
+        """Persist temporary order state only on the credential's account identity."""
+        if not isinstance(orders, list) or not all(isinstance(order, dict) for order in orders):
+            return False
+        now = self._clock()
+        digest = self._digest(credential) if isinstance(credential, str) and credential else None
+        if digest is None:
+            return False
+        with self._lock:
+            self._remove_expired(now)
+            session = self._sessions.get(digest)
+            if session is None or session["mode"] != "account":
+                return False
+            session["orders"] = deepcopy(orders)
+            session["last_activity"] = now
+            return True
+
+    def replace_account_carts(self, credential: str, carts: list[dict[str, Any]]) -> bool:
+        """Persist temporary cart state only on the credential's account identity."""
+        if not isinstance(carts, list) or not all(isinstance(cart, dict) for cart in carts):
+            return False
+        now = self._clock()
+        digest = self._digest(credential) if isinstance(credential, str) and credential else None
+        if digest is None:
+            return False
+        with self._lock:
+            self._remove_expired(now)
+            session = self._sessions.get(digest)
+            if session is None or session["mode"] != "account":
+                return False
+            session["carts"] = deepcopy(carts)
+            session["last_activity"] = now
+            return True
 
     def update_context(
         self, credential: str, *, expected_mode: str, context: dict[str, Any]

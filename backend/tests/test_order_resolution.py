@@ -1,5 +1,6 @@
 from app.data.orders import load_orders
 from app.domain.order_resolution import resolve_order_reference
+from app.domain.confirmations import PendingActionStore
 from app.domain.orders import OrderService
 from app.tools.registry import execute_tool
 
@@ -83,3 +84,29 @@ def test_order_service_list_includes_session_overlay_and_new_orders():
     assert by_id["ORD-103"]["status"] == "Cancelled"
     assert by_id["ORD-201"]["status"] == "Processing"
     assert load_orders()["ORD-103"]["status"] == "Processing"
+
+
+def test_account_order_service_is_empty_and_never_falls_back_to_mock_fixtures():
+    service = OrderService(owned_orders=[], include_mock_fixtures=False)
+    assert service.list_orders() == []
+    assert service.get_order_details("ORD-101")["error"]["code"] == "NOT_FOUND"
+    assert service.cancel_order("ORD-103")["error"]["code"] == "NOT_FOUND"
+
+
+def test_account_order_service_mutates_only_its_owned_order_state():
+    owned = [{"order_id": "ORD-201", "customer": "Alice", "items": ["Serum"],
+              "total_inr": 699, "status": "Processing", "carrier": "Not yet assigned",
+              "tracking_number": "Not yet assigned"}]
+    service = OrderService(owned_orders=owned, include_mock_fixtures=False)
+    confirmation = PendingActionStore()
+    staged = execute_tool(service, "cancel_order", {"order_id": "ORD-201"},
+                          confirmation_state=confirmation)
+    assert staged["error"]["code"] == "CONFIRMATION_REQUIRED"
+    result = execute_tool(
+        service, "cancel_order", {"order_id": "ORD-201",
+        "confirmation_id": staged["confirmation"]["confirmation_id"]},
+        finalized_user_turn=1, confirmation_state=confirmation,
+    )
+    assert result["ok"] is True
+    assert service.get_order_details("ORD-201")["order"]["status"] == "Cancelled"
+    assert service.get_order_details("ORD-101")["error"]["code"] == "NOT_FOUND"

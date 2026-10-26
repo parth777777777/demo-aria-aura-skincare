@@ -164,10 +164,24 @@ Initial codes: `BAD_MESSAGE`, `SESSION_ACTIVE`, `GEMINI_UNAVAILABLE`,
 `ACCOUNT_FEATURES_NOT_READY`, and `INTERNAL`. If `recoverable` is false, the
 backend closes the socket after sending the error. An account-mode call with a missing/invalid/expired
 credential emits `ACCOUNT_SESSION_INVALID` and closes before creating a Gemini
-session. `list_orders` and `resolve_order_reference` are available in account
-mode but operate only on the account's own list (currently empty); account
-mutations and cart/inventory tools remain blocked and return
-`ACCOUNT_FEATURES_NOT_READY`. A provided but invalid or expired Mock DB
+session. Listing, lookup, reference resolution, and eligibility in account mode
+operate only on the temporary identity's own orders; new identities start with
+an empty list. Account cancellation uses action-bound confirmation and persists
+only that identity's temporary order state. Unknown and non-owned IDs both
+return `NOT_FOUND`; Mock DB fixtures are never candidates in account mode.
+Account-mode `build_order_cart` uses the backend catalog and stores the resulting
+temporary cart on the authorized identity; that cart is available on subsequent
+calls for that identity and is isolated from other identities and Mock DB mode.
+`list_order_carts()` returns only carts in the active authorized service, with a
+placement status that distinguishes ready, placed, unavailable, and stale-price
+quotes. This gives a later call a trusted way to discover its existing cart
+without relying on provider memory or a customer-supplied internal ID.
+Account-mode `place_order` uses the same action-bound confirmation contract as
+Mock DB and creates only a simulated Processing order owned by that temporary
+identity. Placement rechecks current prices/totals and COD eligibility; a
+changed price fails closed and requires a new cart and confirmation. Repeated
+placement for the same cart returns the original order idempotently. There is
+no payment collection or fulfilment transaction. A provided but invalid or expired Mock DB
 `context_id` emits `MOCK_SESSION_INVALID` and closes before Gemini connection;
 omitting the token keeps legacy call-local behavior.
 

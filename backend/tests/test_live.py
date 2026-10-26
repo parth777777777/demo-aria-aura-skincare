@@ -389,6 +389,8 @@ def test_prompt_contains_policy_boundaries_and_windows():
     assert "call list_orders" in prompt
     assert "resolve_order_reference" in prompt
     assert "Never imply a fixture is the caller's personal order" in prompt
+    assert "temporary_account source belong to the active demo identity" in prompt
+    assert "do not describe them as sample or unlinked" in prompt
     assert "Never say" in prompt and "ok true" in prompt
     assert "State policy facts only from the policy text and tool results" in prompt
     assert "do not invent details" in prompt
@@ -663,7 +665,7 @@ def test_mock_mode_rejects_invalid_context_id_before_gemini(monkeypatch):
     assert connections == []
 
 
-def test_account_mode_never_falls_through_to_mock_order_tools(monkeypatch):
+def test_account_mode_guessed_mock_order_id_is_not_found(monkeypatch):
     instances = []
 
     class AccountToolCall(FakeLive):
@@ -693,12 +695,131 @@ def test_account_mode_never_falls_through_to_mock_order_tools(monkeypatch):
                 events.append(ws_receive_json(ws))
             result = next(event["result"] for event in events if event.get("type") == "tool_result")
             assert result["ok"] is False
-            assert result["error"]["code"] == "ACCOUNT_FEATURES_NOT_READY"
+            assert result["error"]["code"] == "NOT_FOUND"
             assert "Vitamin C" not in json.dumps(result)
             assert instances[0].responses[0][2] == result
             ws.send_json({"type": "end_call"})
             while ws_receive_json(ws).get("state") != "ended":
                 pass
+
+
+def test_account_carts_persist_across_calls_and_remain_identity_scoped(monkeypatch):
+    starts = [0]
+
+    class AccountCart(FakeLive):
+        async def send_text(self, text):
+            self.text.append(text)
+            await self.queue.put(NS(server_content=NS(turn_complete=True)))
+            starts[0] += 1
+            if starts[0] == 1:
+                await self.queue.put(NS(tool_call=NS(function_calls=[NS(
+                    id="cart-1", name="build_order_cart",
+                    args={"items": [{"product_id": "green-tea-face-wash", "quantity": 1}],
+                          "payment_method": "PREPAID"},
+                )])))
+            else:
+                await self.queue.put(NS(tool_call=NS(function_calls=[NS(
+                    id=f"list-carts-{starts[0]}", name="list_order_carts", args={},
+                )])))
+
+    monkeypatch.setattr(main.app.state, "live_factory", AccountCart)
+    store = main.DemoSessionStore()
+    monkeypatch.setattr(main.app.state, "demo_session_store", store)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        credential = client.post("/api/demo-sessions", json={"name": "Cart Owner"}).json()["credential"]
+        for expected_id in ("CART-000001", None, None):
+            token = credential
+            if starts[0] == 2:
+                token = client.post("/api/demo-sessions", json={"name": "Other Owner"}).json()["credential"]
+            with client.websocket_connect("/ws/call") as ws:
+                ws.send_json({"type": "start_call", "mode": "account", "credential": token})
+                events = []
+                while not any(event.get("type") == "tool_result" for event in events):
+                    events.append(ws_receive_json(ws))
+                result = next(event["result"] for event in events if event.get("type") == "tool_result")
+                assert result["ok"] is True
+                if expected_id is not None:
+                    assert result["cart"]["cart_id"] == expected_id
+                elif token == credential:
+                    assert [cart["cart_id"] for cart in result["carts"]] == ["CART-000001"]
+                    assert result["carts"][0]["placement_status"] == "ready"
+                else:
+                    assert result["carts"] == []
+                ws.send_json({"type": "end_call"})
+                while ws_receive_json(ws).get("state") != "ended":
+                    pass
+
+        identity = store.authorize(credential, expected_mode="account")
+        assert [cart["cart_id"] for cart in identity["carts"]] == ["CART-000001"]
+        assert identity["orders"] == []
+
+
+def test_account_order_placement_confirms_persists_and_retries_idempotently(monkeypatch):
+    store = main.DemoSessionStore()
+    credential, _ = store.create("Order Owner")
+    seed = main.OrderService(include_mock_fixtures=False)
+    cart = seed.build_order_cart(
+        [{"product_id": "green-tea-toner", "quantity": 1}], "PREPAID"
+    )["cart"]
+    assert store.replace_account_carts(credential, [cart])
+    call_count = [0]
+
+    class AccountPlacement(FakeLive):
+        async def send_audio(self, data):
+            call_count[0] += 1
+            await self.queue.put(NS(tool_call=NS(function_calls=[NS(
+                id=f"place-{call_count[0]}", name="place_order",
+                args={"cart_id": cart["cart_id"]},
+            )])))
+
+        async def _user_turn(self, text):
+            await self.queue.put(NS(server_content=NS(
+                input_transcription=NS(text=text), turn_complete=False,
+            )))
+
+        async def send_tool_response(self, call_id, name, result):
+            await super().send_tool_response(call_id, name, result)
+            if result.get("error", {}).get("code") == "CONFIRMATION_REQUIRED":
+                confirmation = result["confirmation"]
+                await self._user_turn("yes, I confirm")
+                await self.queue.put(NS(tool_call=NS(function_calls=[NS(
+                    id="confirmed-place", name="place_order",
+                    args={**confirmation["target"],
+                          "confirmation_id": confirmation["confirmation_id"]},
+                )])))
+            elif result.get("ok"):
+                await self.queue.put(NS(go_away=NS(time_left="1s")))
+
+    monkeypatch.setattr(main.app.state, "live_factory", AccountPlacement)
+    monkeypatch.setattr(main.app.state, "demo_session_store", store)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        observed = []
+        for attempt in range(2):
+            with client.websocket_connect("/ws/call") as ws:
+                ws.send_json({"type": "start_call", "mode": "account", "credential": credential})
+                ws_receive_json(ws); ws_receive_json(ws)
+                ws.send_bytes(b"synthetic audio")
+                events = []
+                for _ in range(30):
+                    event = ws_receive_json(ws)
+                    events.append(event)
+                    if event.get("state") == "ended":
+                        break
+                observed.append([event["result"] for event in events if event.get("type") == "tool_result"])
+
+    first_results, retry_results = observed
+    assert first_results[0]["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert first_results[1]["ok"] is True
+    assert first_results[1]["idempotent"] is False
+    assert first_results[1]["order"]["order_id"] == "ORD-201"
+    assert first_results[1]["order"]["customer"] == "Order Owner"
+    assert retry_results == [{
+        "ok": True, "order": first_results[1]["order"], "idempotent": True
+    }]
+    identity = store.authorize(credential, expected_mode="account")
+    assert [order["order_id"] for order in identity["orders"]] == ["ORD-201"]
 
 
 def test_mock_db_start_call_without_mode_remains_supported(monkeypatch):

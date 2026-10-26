@@ -276,57 +276,61 @@ async def call_socket(websocket: WebSocket) -> None:
     async def dispatch_tool(call_id: str, call: Any) -> None:
         name, args = _get(call, "name", default=""), _get(call, "args", default={})
         await emit("tool_call", call_id=call_id, name=name, args=args)
-        if name in {"list_orders", "resolve_order_reference"}:
-            if call_mode == "account":
-                candidates = app.state.demo_session_store.list_account_orders(
-                    session_context_id or ""
-                )
-                if candidates is None:
-                    result = {
-                        "ok": False,
-                        "error": {
-                            "code": "ACCOUNT_SESSION_INVALID",
-                            "message": "The demo account session expired. Create a new demo identity.",
-                        },
-                    }
+        if call_mode == "account":
+            with app.state.demo_session_store.account_transaction(session_context_id or "") as account:
+                if account is None or account["identity_id"] != demo_identity["identity_id"]:
+                    result = {"ok": False, "error": {
+                        "code": "ACCOUNT_SESSION_INVALID",
+                        "message": "The demo account session expired. Create a new demo identity.",
+                    }}
                 else:
-                    result = execute_tool(
-                        service,
-                        name,
-                        args,
-                        finalized_user_turn=user_turn,
-                        order_candidates=candidates,
-                        order_source="temporary_account",
-                        conversation_context=conversation_context,
+                    conversation_context.clear()
+                    conversation_context.update(account["conversation_context"])
+                    account_service = OrderService(
+                        owned_orders=account["orders"], owned_carts=account.get("carts", []),
+                        customer_name=account["display_name"],
+                        include_mock_fixtures=False,
                     )
-            else:
-                candidates = service.list_orders()
-                result = execute_tool(
-                    service,
-                    name,
-                    args,
-                    finalized_user_turn=user_turn,
-                    order_candidates=candidates,
-                    order_source="mock_db_sample_data",
-                    conversation_context=conversation_context,
-                )
-        elif call_mode == "account":
-            # The account-mode commerce tools are added in a later approved
-            # slice. Never let this mode fall through to the Mock DB service.
-            result = {
-                "ok": False,
-                "error": {
-                    "code": "ACCOUNT_FEATURES_NOT_READY",
-                    "message": "Account-mode order features are not available yet.",
-                },
-            }
+                    if name in {"list_orders", "resolve_order_reference"}:
+                        result = execute_tool(
+                            account_service, name, args, finalized_user_turn=user_turn,
+                            order_candidates=account["orders"], order_source="temporary_account",
+                            conversation_context=conversation_context,
+                        )
+                    else:
+                        result = execute_tool(
+                            account_service, name, args, confirmation_state=confirmation,
+                            finalized_user_turn=user_turn,
+                            conversation_context=conversation_context,
+                        )
+                    app.state.demo_session_store.replace_account_orders(
+                        session_context_id or "", account_service.owned_orders()
+                    )
+                    app.state.demo_session_store.replace_account_carts(
+                        session_context_id or "", account_service.owned_carts()
+                    )
+                    app.state.demo_session_store.update_context(
+                        session_context_id or "", expected_mode="account",
+                        context=conversation_context,
+                    )
+        elif name in {"list_orders", "resolve_order_reference"}:
+            candidates = service.list_orders()
+            result = execute_tool(
+                service,
+                name,
+                args,
+                finalized_user_turn=user_turn,
+                order_candidates=candidates,
+                order_source="mock_db_sample_data",
+                conversation_context=conversation_context,
+            )
         else:
             result = execute_tool(
                 service, name, args, confirmation_state=confirmation,
                 finalized_user_turn=user_turn,
                 conversation_context=conversation_context,
             )
-        if session_context_id is not None:
+        if call_mode != "account" and session_context_id is not None:
             app.state.demo_session_store.update_context(
                 session_context_id,
                 expected_mode=call_mode,
@@ -502,6 +506,12 @@ async def call_socket(websocket: WebSocket) -> None:
                         await websocket.close(code=1008)
                         break
                     conversation_context = demo_identity["conversation_context"]
+                    service = OrderService(
+                        owned_orders=demo_identity["orders"],
+                        owned_carts=demo_identity.get("carts", []),
+                        customer_name=demo_identity["display_name"],
+                        include_mock_fixtures=False,
+                    )
                 else:
                     session_context_id = control.get("context_id")
                     if session_context_id is not None:

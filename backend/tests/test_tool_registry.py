@@ -6,15 +6,15 @@ from app.domain.orders import OrderService
 from app.tools import registry
 
 
-def test_all_nine_documented_tools_registered():
+def test_all_ten_documented_tools_registered():
     assert set(registry.list_tools()) == {
-        "list_orders", "resolve_order_reference",
+        "list_order_carts", "list_orders", "resolve_order_reference",
         "get_order_details", "cancel_order", "check_cancellation_eligibility",
         "check_return_eligibility", "check_damaged_product_eligibility",
         "build_order_cart", "place_order",
     }
     assert {item["name"] for item in registry.get_tool_definitions()} == set(registry.list_tools())
-    assert len(registry.list_tools()) == 9
+    assert len(registry.list_tools()) == 10
 
 
 def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
@@ -27,6 +27,31 @@ def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
     assert registry.execute_tool(service, "check_return_eligibility", {
         "order_id": "ORD-102", "customer_declared": {"unused": "yes"}
     })["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_list_order_carts_exposes_persistent_candidates_and_current_price_status(monkeypatch):
+    import app.domain.orders as order_domain
+
+    service = OrderService(include_mock_fixtures=False)
+    assert registry.execute_tool(service, "list_order_carts", {}) == {
+        "ok": True, "carts": []
+    }
+    cart = service.build_order_cart(
+        [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID"
+    )["cart"]
+    listed = registry.execute_tool(service, "list_order_carts", {})["carts"]
+    assert listed == [{**cart, "placement_status": "ready"}]
+
+    original_get_products = order_domain.get_products
+    monkeypatch.setattr(order_domain, "get_products", lambda: {
+        **original_get_products(),
+        "green-tea-face-wash": {
+            **original_get_products()["green-tea-face-wash"], "price_inr": 499,
+        },
+    })
+    stale = registry.execute_tool(service, "list_order_carts", {})["carts"][0]
+    assert stale["cart_id"] == cart["cart_id"]
+    assert stale["placement_status"] == "price_changed"
 
 
 def test_gemini_declarations_are_sanitized_without_weakening_registry():
@@ -44,7 +69,7 @@ def test_gemini_declarations_are_sanitized_without_weakening_registry():
             assert_sanitized(schema["items"])
 
     declarations = get_gemini_tool_declarations()
-    assert len(declarations) == 9
+    assert len(declarations) == 10
     for declaration in declarations:
         assert_sanitized(declaration["parameters"])
         sdk_declaration = types.FunctionDeclaration(**declaration)

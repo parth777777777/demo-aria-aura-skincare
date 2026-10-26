@@ -137,3 +137,38 @@ def test_place_order_confirmation_binds_cart_details_and_rechecks_policy():
     )
     assert confirmed["ok"] is True
     assert confirmed["order"]["total_inr"] == cart["total_inr"]
+
+
+def test_changed_catalog_price_blocks_confirmation_and_requires_rebuilt_cart(monkeypatch):
+    import app.domain.orders as order_domain
+
+    service = OrderService()
+    pending = PendingActionStore()
+    cart = service.build_order_cart(
+        [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID")['cart']
+    original_get_products = order_domain.get_products
+
+    def changed_catalog():
+        products = original_get_products()
+        products["green-tea-face-wash"]["price_inr"] += 1
+        return products
+
+    monkeypatch.setattr(order_domain, "get_products", changed_catalog)
+    blocked = execute_tool(
+        service, "place_order", {"cart_id": cart["cart_id"]},
+        confirmation_state=pending, finalized_user_turn=1,
+    )
+
+    assert blocked["error"]["code"] == "CART_PRICE_CHANGED"
+    assert len(pending) == 0
+    assert service.get_order_details("ORD-201")["error"]["code"] == "NOT_FOUND"
+
+    rebuilt = service.build_order_cart(
+        [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID")['cart']
+    assert rebuilt["cart_id"] != cart["cart_id"]
+    staged = execute_tool(
+        service, "place_order", {"cart_id": rebuilt["cart_id"]},
+        confirmation_state=pending, finalized_user_turn=2,
+    )
+    assert staged["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert staged["confirmation"]["details"]["total_inr"] == rebuilt["total_inr"]
