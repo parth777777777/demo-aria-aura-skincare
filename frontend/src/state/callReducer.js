@@ -9,6 +9,31 @@ export const initialCallState = {
   providerActivity: false,
 };
 
+function omitConfirmationSecrets(value) {
+  if (Array.isArray(value)) return value.map(omitConfirmationSecrets);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "confirmation_id")
+      .map(([key, nested]) => [
+        key,
+        key === "confirmation"
+          ? omitConfirmationId(nested)
+          : omitConfirmationSecrets(nested),
+      ]),
+  );
+}
+
+function omitConfirmationId(value) {
+  if (Array.isArray(value)) return value.map(omitConfirmationId);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key !== "id" && key !== "confirmation_id")
+      .map(([key, nested]) => [key, omitConfirmationId(nested)]),
+  );
+}
+
 export function callReducer(state = initialCallState, event) {
   if (!event || typeof event.type !== "string") return state;
 
@@ -69,7 +94,10 @@ export function callReducer(state = initialCallState, event) {
         (tool) => tool.call_id === event.call_id,
       );
       const tools = [...state.tools];
-      const item = { ...event, result: index < 0 ? null : tools[index].result };
+      const item = {
+        ...omitConfirmationSecrets(event),
+        result: index < 0 ? null : tools[index].result,
+      };
       if (index < 0) tools.push(item);
       else tools[index] = item;
       return { ...state, tools };
@@ -82,8 +110,15 @@ export function callReducer(state = initialCallState, event) {
       const tools = [...state.tools];
       const item =
         index < 0
-          ? { call_id: event.call_id, name: event.name, result: event.result }
-          : { ...tools[index], result: event.result };
+          ? {
+              call_id: event.call_id,
+              name: event.name,
+              result: omitConfirmationSecrets(event.result),
+            }
+          : {
+              ...tools[index],
+              result: omitConfirmationSecrets(event.result),
+            };
       if (index < 0) tools.push(item);
       else tools[index] = item;
       return { ...state, tools };

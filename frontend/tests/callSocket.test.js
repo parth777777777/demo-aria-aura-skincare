@@ -43,6 +43,17 @@ const make = (onAudio = () => {}) => {
   client.start();
   return { client, events, socket: FakeWebSocket.instance };
 };
+const makeWithPayload = (startPayload) => {
+  const events = [];
+  const client = createCallSocket({
+    url: "ws://test/ws/call",
+    startPayload,
+    onEvent: (event) => events.push(event),
+    WebSocketImpl: FakeWebSocket,
+  });
+  client.start();
+  return { client, events, socket: FakeWebSocket.instance };
+};
 const sendEvent = (socket, event) =>
   socket.emit("message", JSON.stringify(event));
 
@@ -52,6 +63,21 @@ test("start sends start_call exactly once", () => {
   socket.open();
   assert.deepEqual(socket.sent, ['{"type":"start_call"}']);
   assert.deepEqual(events, []);
+});
+
+test("account-mode start payload includes its credential", () => {
+  const credential = "opaque-secret";
+  const { socket } = makeWithPayload({
+    type: "start_call",
+    mode: "account",
+    credential,
+  });
+  socket.open();
+  assert.deepEqual(JSON.parse(socket.sent[0]), {
+    type: "start_call",
+    mode: "account",
+    credential,
+  });
 });
 
 test("events reach onEvent", () => {

@@ -16,7 +16,10 @@ import {
   updateMicLiveState,
 } from "../lib/micLifecycle.js";
 
-export function useCallSocket(onEvent) {
+export function useCallSocket(
+  onEvent,
+  getStartPayload = () => ({ type: "start_call" }),
+) {
   const eventRef = useRef(onEvent);
   const socketRef = useRef(null);
   const playerRef = useRef(null);
@@ -105,6 +108,7 @@ export function useCallSocket(onEvent) {
       openSocket: () => {
         socket = createCallSocket({
           url: import.meta.env.VITE_WS_URL,
+          startPayload: getStartPayload(),
           onAudio: (data) => {
             statsRef.current.audioBytesReceived += data.byteLength;
             setStats({ ...statsRef.current });

@@ -1,8 +1,9 @@
 import { AlertCircle, Leaf, Sparkles } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { OrderResult } from "./OrderCard.jsx";
+import { OrderCard } from "./OrderCard.jsx";
 import { SampleOrders } from "./SampleOrders.jsx";
+import { getOrderDisplays } from "../lib/orderRendering.js";
 
 const labels = {
   idle: "Ready when you are",
@@ -24,7 +25,12 @@ export function ConversationPanel({
   micStats = { frames: 0, bytes: 0 },
   audioForwarded = { frames: 0, bytes: 0 },
   providerActivity = false,
+  isAccountMode = false,
 }) {
+  const actionTools = state.tools.filter((tool) =>
+    ["cancel_order", "place_order"].includes(tool.name),
+  );
+  const orderDisplays = getOrderDisplays(state.tools);
   return (
     <section
       className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm lg:min-h-[730px]"
@@ -71,6 +77,49 @@ export function ConversationPanel({
           <AlertDescription>{errorMessage}</AlertDescription>
         </Alert>
       )}
+      {isAccountMode &&
+        state.tools.some(
+          (tool) => tool.result?.error?.code === "ACCOUNT_FEATURES_NOT_READY",
+        ) && (
+          <Alert className="mx-4 mt-4 w-auto border-amber-300 bg-amber-50 text-amber-950 sm:mx-7">
+            <AlertCircle />
+            <AlertDescription>
+              Demo-account order actions aren’t available yet. No order action
+              was completed.
+            </AlertDescription>
+          </Alert>
+        )}
+      {actionTools.length > 0 && (
+        <div className="grid gap-2 px-4 pt-4 sm:px-7" aria-live="polite">
+          {actionTools.map((tool) => {
+            const code = tool.result?.error?.code;
+            let message = null;
+            if (tool.result?.ok === true) {
+              message =
+                tool.name === "cancel_order"
+                  ? "Aura confirmed the cancellation."
+                  : "Aura confirmed the order placement.";
+            } else if (code === "CONFIRMATION_REQUIRED") {
+              message =
+                "Waiting for confirmation in your conversation with Aria.";
+            } else if (tool.result?.ok === false) {
+              message =
+                "Aura did not complete this action. Aria can explain what happened.";
+            } else if (tool.result == null) {
+              message = "Aria is checking this action with Aura…";
+            }
+            return message ? (
+              <p
+                key={tool.call_id}
+                className="rounded-xl border border-border bg-muted px-4 py-3 text-sm"
+                role="status"
+              >
+                {message}
+              </p>
+            ) : null;
+          })}
+        </div>
+      )}
       <ScrollArea
         className="min-h-[300px] flex-1 overflow-hidden px-4 py-5 sm:px-7"
         ref={transcriptRef}
@@ -89,7 +138,7 @@ export function ConversationPanel({
                 When you start a call, Aria's replies and helpful order details
                 will show up in this space.
               </p>
-              <SampleOrders />
+              {!isAccountMode && <SampleOrders />}
             </div>
           )}
           {state.turns.map((turn) => (
@@ -116,20 +165,44 @@ export function ConversationPanel({
                 >
                   {turn.text}
                 </div>
-                {turn.role === "aria" &&
-                  turn.turn_id ===
-                    [...state.turns]
-                      .reverse()
-                      .find((item) => item.role === "aria")?.turn_id &&
-                  state.tools
-                    .filter((tool) => tool.name === "get_order_details")
-                    .map((tool) => (
-                      <OrderResult key={tool.call_id} tool={tool} />
-                    ))}
               </div>
             </div>
           ))}
         </div>
+        {orderDisplays.length > 0 && (
+          <section className="mt-5" aria-label="Orders from Aura">
+            {orderDisplays.some(
+              (order) => order.source === "mock_db_sample_data",
+            ) && (
+              <p className="mb-3 text-sm text-muted-foreground">
+                Sample demo orders
+              </p>
+            )}
+            <ul className="grid gap-3">
+              {orderDisplays.map((order) => (
+                <OrderCard key={order.id} order={order} />
+              ))}
+            </ul>
+          </section>
+        )}
+        {state.tools.some(
+          (tool) =>
+            tool.name === "list_orders" &&
+            tool.result?.ok === true &&
+            Array.isArray(tool.result.orders) &&
+            tool.result.orders.length === 0,
+        ) && (
+          <p
+            className="mt-5 rounded-xl border border-border bg-muted p-4 text-sm"
+            role="status"
+          >
+            {state.tools.findLast(
+              (tool) => tool.name === "list_orders" && tool.result?.ok === true,
+            )?.result.source === "mock_db_sample_data"
+              ? "No sample demo orders were found."
+              : "Aura found no orders for this demo identity."}
+          </p>
+        )}
       </ScrollArea>
       {debug && (
         <div
@@ -162,7 +235,11 @@ export function ConversationPanel({
         </div>
       )}
       <footer className="border-t border-border px-5 py-3 text-sm text-muted-foreground sm:px-[29px]">
-        <div>Aria answers questions about Aura orders. Sample data shown.</div>
+        <div>
+          {isAccountMode
+            ? "Aria answers questions about orders linked to this temporary demo identity."
+            : "Aria answers questions about Aura orders. Sample data shown."}
+        </div>
         {state.status.state === "live" && (
           <div className="mt-2 text-xs" aria-live="polite">
             Mic sent: {micStats.frames} frames · Backend forwarded:{" "}
