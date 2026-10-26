@@ -2,6 +2,7 @@ export function createCallSocket({
   url,
   onEvent,
   onAudio = () => {},
+  startPayload = { type: "start_call" },
   WebSocketImpl = WebSocket,
 }) {
   let socket = null;
@@ -23,7 +24,7 @@ export function createCallSocket({
       socket = new WebSocketImpl(url);
       socket.binaryType = "arraybuffer";
       socket.addEventListener("open", () => {
-        if (!closed) socket.send(JSON.stringify({ type: "start_call" }));
+        if (!closed) socket.send(JSON.stringify(startPayload));
       });
       socket.addEventListener("message", (message) => {
         if (closed) return;

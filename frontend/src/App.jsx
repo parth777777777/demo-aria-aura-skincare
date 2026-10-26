@@ -9,6 +9,8 @@ import { getVisibleNotice } from "./lib/display.js";
 import { SummaryPage } from "./components/SummaryPage.jsx";
 import { CallPanel } from "./components/CallPanel.jsx";
 import { ConversationPanel } from "./components/ConversationPanel.jsx";
+import { DemoAccountPage } from "./components/DemoAccountPage.jsx";
+import { Button } from "@/components/ui/button";
 
 const summaryKeys = [
   "customer_intent",
@@ -17,10 +19,23 @@ const summaryKeys = [
   "call_summary",
 ];
 
+function getStoredDemoIdentity() {
+  try {
+    const credential = sessionStorage.getItem("aura.demoIdentity.credential");
+    const displayName = sessionStorage.getItem("aura.demoIdentity.displayName");
+    return credential && displayName ? { credential, displayName } : null;
+  } catch {
+    return null;
+  }
+}
+
 function App() {
   const [state, dispatch] = useReducer(callReducer, initialCallState);
   const [elapsed, setElapsed] = useState(0);
   const [route, setRoute] = useHashRoute();
+  const [demoName, setDemoName] = useState(() => {
+    return getStoredDemoIdentity()?.displayName || "";
+  });
   const [mockData, setMockData] = useState(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef(null);
@@ -31,7 +46,30 @@ function App() {
     end: endCall,
     playTestTone,
     stats: micStats,
-  } = useCallSocket(dispatch);
+  } = useCallSocket(
+    (event) => {
+      if (event?.type === "error" && event.code === "ACCOUNT_SESSION_INVALID") {
+        try {
+          sessionStorage.removeItem("aura.demoIdentity.credential");
+          sessionStorage.removeItem("aura.demoIdentity.displayName");
+        } catch {
+          // Storage may be unavailable; the current UI still offers re-creation.
+        }
+        setDemoName("");
+      }
+      dispatch(event);
+    },
+    () => {
+      const identity = getStoredDemoIdentity();
+      return identity
+        ? {
+            type: "start_call",
+            mode: "account",
+            credential: identity.credential,
+          }
+        : { type: "start_call" };
+    },
+  );
   const replayEvents = useMemo(() => mockData?.lookup || [], [mockData]);
   const { startMockReplay, stopMockReplay } = useMockReplay(
     dispatch,
@@ -153,7 +191,19 @@ function App() {
           </span>
         </a>
       </header>
-      {route === "summary" ? (
+      {route === "demo-account" ? (
+        <DemoAccountPage
+          onCreated={(name) => {
+            setDemoName(name);
+            window.location.hash = "#/";
+            setRoute("call");
+          }}
+          onBack={() => {
+            window.location.hash = "#/";
+            setRoute("call");
+          }}
+        />
+      ) : route === "summary" ? (
         <SummaryPage
           summary={summary}
           copied={copied}
@@ -165,42 +215,80 @@ function App() {
           }}
         />
       ) : (
-        <div className="grid items-stretch gap-4 py-4 lg:grid-cols-[minmax(360px,.82fr)_minmax(0,1.18fr)] lg:gap-7 lg:py-[30px]">
-          <CallPanel
-            state={state}
-            voiceState={voiceState}
-            time={time}
-            callActive={callActive}
-            runReplay={runReplay}
-            runCall={() => {
-              if (callActive) endCall();
-              else {
-                stopMockReplay();
-                stopScenarioReplay();
-                dispatch({ type: "call_requested" });
-                setElapsed(0);
-                startCall();
-              }
-            }}
-            navigateSummary={navigateSummary}
-            startAnother={startAnother}
-            scenario={scenario}
-            ScenarioPicker={ScenarioPicker}
-            runScenario={runScenario}
-            playTestTone={playTestTone}
-          />
-          <ConversationPanel
-            state={state}
-            voiceState={voiceState}
-            errorMessage={errorMessage}
-            sessionLimit={sessionLimit}
-            transcriptRef={transcriptRef}
-            debug={debug}
-            micStats={micStats}
-            audioForwarded={state.audioForwarded}
-            providerActivity={state.providerActivity}
-          />
-        </div>
+        <>
+          <div className="flex justify-end pt-3">
+            {demoName ? (
+              <Button
+                variant="ghost"
+                className="rounded-full"
+                onClick={() => {
+                  try {
+                    sessionStorage.removeItem("aura.demoIdentity.credential");
+                    sessionStorage.removeItem("aura.demoIdentity.displayName");
+                  } catch {
+                    /* unavailable storage */
+                  }
+                  setDemoName("");
+                }}
+              >
+                Demo identity: {demoName} · Reset
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="rounded-full"
+                onClick={() => {
+                  window.location.hash = "#/demo-account";
+                  setRoute("demo-account");
+                }}
+              >
+                Create demo account
+              </Button>
+            )}
+          </div>
+          <div className="grid items-stretch gap-4 py-4 lg:grid-cols-[minmax(360px,.82fr)_minmax(0,1.18fr)] lg:gap-7 lg:py-[30px]">
+            <CallPanel
+              state={state}
+              voiceState={voiceState}
+              time={time}
+              callActive={callActive}
+              runReplay={runReplay}
+              runCall={() => {
+                if (callActive) endCall();
+                else {
+                  if (demoName && !getStoredDemoIdentity()) {
+                    window.location.hash = "#/demo-account";
+                    setRoute("demo-account");
+                    return;
+                  }
+                  stopMockReplay();
+                  stopScenarioReplay();
+                  dispatch({ type: "call_requested" });
+                  setElapsed(0);
+                  startCall();
+                }
+              }}
+              navigateSummary={navigateSummary}
+              startAnother={startAnother}
+              scenario={scenario}
+              ScenarioPicker={ScenarioPicker}
+              runScenario={runScenario}
+              playTestTone={playTestTone}
+            />
+            <ConversationPanel
+              state={state}
+              voiceState={voiceState}
+              errorMessage={errorMessage}
+              sessionLimit={sessionLimit}
+              transcriptRef={transcriptRef}
+              debug={debug}
+              micStats={micStats}
+              audioForwarded={state.audioForwarded}
+              providerActivity={state.providerActivity}
+              isAccountMode={Boolean(demoName)}
+            />
+          </div>
+        </>
       )}
     </main>
   );

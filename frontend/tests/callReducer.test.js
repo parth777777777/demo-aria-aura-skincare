@@ -96,6 +96,53 @@ test("duplicate tool_result does not duplicate the call entry", () => {
   assert.deepEqual(state.tools[0].result, { ok: true, repeated: true });
 });
 
+test("confirmation identifiers are not retained in tool activity state", () => {
+  const state = apply([
+    {
+      type: "tool_call",
+      call_id: "c1",
+      name: "cancel_order",
+      args: { order_id: "ORD-101", confirmation_id: "secret-args" },
+    },
+    {
+      type: "tool_result",
+      call_id: "c1",
+      name: "cancel_order",
+      result: {
+        ok: false,
+        error: { code: "CONFIRMATION_REQUIRED" },
+        confirmation: { id: "secret-result", action: "cancel_order" },
+      },
+    },
+  ]);
+  assert.deepEqual(state.tools[0].args, { order_id: "ORD-101" });
+  assert.deepEqual(state.tools[0].result.confirmation, {
+    action: "cancel_order",
+  });
+  assert.equal(JSON.stringify(state).includes("secret-"), false);
+});
+
+test("only successful mutation tool results are recorded as successful", () => {
+  const state = apply([
+    { type: "tool_call", call_id: "pending", name: "cancel_order" },
+    {
+      type: "tool_result",
+      call_id: "pending",
+      name: "cancel_order",
+      result: { ok: false, error: { code: "CONFIRMATION_REQUIRED" } },
+    },
+    { type: "tool_call", call_id: "done", name: "cancel_order" },
+    {
+      type: "tool_result",
+      call_id: "done",
+      name: "cancel_order",
+      result: { ok: true, order_id: "ORD-101" },
+    },
+  ]);
+  assert.equal(state.tools[0].result.ok, false);
+  assert.equal(state.tools[1].result.ok, true);
+});
+
 test("interrupted finalizes the latest Aria turn and marks it interrupted", () => {
   const state = apply([
     transcript("a1", "aria", "Speaking", false),

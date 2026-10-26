@@ -1,18 +1,20 @@
 import json
 from unittest.mock import patch
 
+from app.domain.confirmations import PendingActionStore
 from app.domain.orders import OrderService
 from app.tools import registry
 
 
-def test_all_seven_documented_tools_registered():
+def test_all_ten_documented_tools_registered():
     assert set(registry.list_tools()) == {
+        "list_order_carts", "list_orders", "resolve_order_reference",
         "get_order_details", "cancel_order", "check_cancellation_eligibility",
         "check_return_eligibility", "check_damaged_product_eligibility",
         "build_order_cart", "place_order",
     }
     assert {item["name"] for item in registry.get_tool_definitions()} == set(registry.list_tools())
-    assert len(registry.list_tools()) == 7
+    assert len(registry.list_tools()) == 10
 
 
 def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
@@ -25,6 +27,31 @@ def test_unknown_tool_and_invalid_or_extra_arguments_rejected():
     assert registry.execute_tool(service, "check_return_eligibility", {
         "order_id": "ORD-102", "customer_declared": {"unused": "yes"}
     })["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_list_order_carts_exposes_persistent_candidates_and_current_price_status(monkeypatch):
+    import app.domain.orders as order_domain
+
+    service = OrderService(include_mock_fixtures=False)
+    assert registry.execute_tool(service, "list_order_carts", {}) == {
+        "ok": True, "carts": []
+    }
+    cart = service.build_order_cart(
+        [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID"
+    )["cart"]
+    listed = registry.execute_tool(service, "list_order_carts", {})["carts"]
+    assert listed == [{**cart, "placement_status": "ready"}]
+
+    original_get_products = order_domain.get_products
+    monkeypatch.setattr(order_domain, "get_products", lambda: {
+        **original_get_products(),
+        "green-tea-face-wash": {
+            **original_get_products()["green-tea-face-wash"], "price_inr": 499,
+        },
+    })
+    stale = registry.execute_tool(service, "list_order_carts", {})["carts"][0]
+    assert stale["cart_id"] == cart["cart_id"]
+    assert stale["placement_status"] == "price_changed"
 
 
 def test_gemini_declarations_are_sanitized_without_weakening_registry():
@@ -42,7 +69,7 @@ def test_gemini_declarations_are_sanitized_without_weakening_registry():
             assert_sanitized(schema["items"])
 
     declarations = get_gemini_tool_declarations()
-    assert len(declarations) == 7
+    assert len(declarations) == 10
     for declaration in declarations:
         assert_sanitized(declaration["parameters"])
         sdk_declaration = types.FunctionDeclaration(**declaration)
@@ -53,6 +80,8 @@ def test_gemini_declarations_are_sanitized_without_weakening_registry():
 
     by_name = {item["name"]: item for item in declarations}
     assert by_name["get_order_details"]["parameters"]["required"] == ["order_id"]
+    assert by_name["list_orders"]["parameters"]["required"] == []
+    assert by_name["resolve_order_reference"]["parameters"]["required"] == ["reference"]
     assert by_name["cancel_order"]["parameters"]["required"] == ["order_id"]
     assert by_name["check_cancellation_eligibility"]["parameters"]["required"] == ["order_id"]
     assert by_name["check_return_eligibility"]["parameters"]["required"] == ["order_id"]
@@ -73,27 +102,34 @@ def test_gemini_declarations_are_sanitized_without_weakening_registry():
 
 def test_session_service_is_required_and_isolated():
     first, second = OrderService(), OrderService()
-    confirmation = {}
+    confirmation = PendingActionStore()
     result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=confirmation)
     assert result["error"]["code"] == "CONFIRMATION_REQUIRED"
-    result = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=confirmation, finalized_user_turn=1)
+    assert first.get_order_details("ORD-103")["order"]["status"] == "Processing"
+    result = registry.execute_tool(first, "cancel_order", {
+        "order_id": "ORD-103", "confirmation_id": result["confirmation"]["confirmation_id"]
+    }, confirmation_state=confirmation, finalized_user_turn=1)
     assert result["status"] == "Cancelled"
     assert second.get_order_details("ORD-103")["order"]["status"] == "Processing"
 
 
 def test_confirmation_required_explains_action_was_not_executed_and_names_target():
     service = OrderService()
+    state = PendingActionStore()
     cancellation = registry.execute_tool(
-        service, "cancel_order", {"order_id": "ORD-103"}, confirmation_state={})
+        service, "cancel_order", {"order_id": "ORD-103"}, confirmation_state=state)
     assert cancellation["error"]["code"] == "CONFIRMATION_REQUIRED"
     assert "not executed" in cancellation["error"]["message"]
     assert "cancel order ORD-103" in cancellation["error"]["message"]
 
+    cart = service.build_order_cart(
+        [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID")["cart"]
     placement = registry.execute_tool(
-        service, "place_order", {"cart_id": "CART-000001"}, confirmation_state={})
+        service, "place_order", {"cart_id": cart["cart_id"]}, confirmation_state=state)
     assert placement["error"]["code"] == "CONFIRMATION_REQUIRED"
     assert "not executed" in placement["error"]["message"]
-    assert "place the order for cart CART-000001" in placement["error"]["message"]
+    assert f"place cart {cart['cart_id']} for ₹" in placement["error"]["message"]
+    assert placement["confirmation"]["details"]["total_inr"] == cart["total_inr"]
 
 
 def test_delivery_age_is_authoritative_and_non_delivered_reason():
@@ -196,9 +232,12 @@ def test_place_order_is_idempotent_visible_cancellable_and_session_local():
     assert placed["order"]["order_id"] == "ORD-201"
     assert repeat["idempotent"] is True
     assert first.get_order_details("ORD-201")["order"]["status"] == "Processing"
-    guard = {}
-    assert registry.execute_tool(first, "cancel_order", {"order_id": "ORD-201"}, confirmation_state=guard)["error"]["code"] == "CONFIRMATION_REQUIRED"
-    assert registry.execute_tool(first, "cancel_order", {"order_id": "ORD-201"}, confirmation_state=guard, finalized_user_turn=1)["status"] == "Cancelled"
+    guard = PendingActionStore()
+    pending = registry.execute_tool(first, "cancel_order", {"order_id": "ORD-201"}, confirmation_state=guard)
+    assert pending["error"]["code"] == "CONFIRMATION_REQUIRED"
+    assert registry.execute_tool(first, "cancel_order", {
+        "order_id": "ORD-201", "confirmation_id": pending["confirmation"]["confirmation_id"]
+    }, confirmation_state=guard, finalized_user_turn=1)["status"] == "Cancelled"
     assert second.place_order(cart["cart_id"])["error"]["code"] == "CART_NOT_FOUND"
     second_cart = _cart(second, "green-tea-face-wash")["cart"]
     assert second_cart["cart_id"] == "CART-000001"

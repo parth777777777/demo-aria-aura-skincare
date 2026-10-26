@@ -19,6 +19,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from app.data.orders import ORDERS_FILE
+from app.domain.confirmations import PendingActionStore
 from app.domain.orders import OrderService
 from app.live.session import GeminiLiveSession
 from app.tools.registry import execute_tool
@@ -90,7 +91,9 @@ async def run() -> int:
     model = os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
     live = GeminiLiveSession(key, model)
     service = OrderService()
-    confirmation: dict[tuple[str, str], int] = {}
+    confirmation = PendingActionStore(
+        ttl_seconds=int(os.getenv("PENDING_ACTION_TTL_SECONDS", "300"))
+    )
     failures: list[str] = []
     finalized_user_turn = 0
     events = live.events()

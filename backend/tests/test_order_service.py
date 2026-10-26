@@ -47,6 +47,36 @@ class OrderServiceTests(unittest.TestCase):
             self.assertEqual(self.service.cancel_order(order_id)["error"]["code"], "NOT_ELIGIBLE")
         self.assertEqual(OrderService().get_order_details("ORD-103")["order"]["status"], "Processing")
 
+    def test_carts_can_be_rehydrated_for_the_same_temporary_identity(self) -> None:
+        first = OrderService(include_mock_fixtures=False)
+        built = first.build_order_cart(
+            [{"product_id": "green-tea-face-wash", "quantity": 1}], "PREPAID"
+        )
+        saved_carts = first.owned_carts()
+
+        next_call = OrderService(owned_carts=saved_carts, include_mock_fixtures=False)
+
+        assert next_call.get_cart_details(built["cart"]["cart_id"]) == {
+            "ok": True, "cart": built["cart"]
+        }
+        assert next_call.list_orders() == []
+        placed = next_call.place_order(built["cart"]["cart_id"])
+        assert placed["order"]["order_id"] == "ORD-201"
+
+        following_call = OrderService(
+            owned_orders=next_call.owned_orders(),
+            owned_carts=next_call.owned_carts(),
+            include_mock_fixtures=False,
+        )
+        assert following_call.get_placed_order(built["cart"]["cart_id"]) == placed["order"]
+        assert following_call.place_order(built["cart"]["cart_id"]) == {
+            "ok": True, "order": placed["order"], "idempotent": True
+        }
+        second_cart = following_call.build_order_cart(
+            [{"product_id": "green-tea-toner", "quantity": 1}], "PREPAID"
+        )
+        assert following_call.place_order(second_cart["cart"]["cart_id"])["order"]["order_id"] == "ORD-202"
+
     def test_concurrent_cancellation_only_one_fresh_success(self) -> None:
         with ThreadPoolExecutor(max_workers=8) as executor:
             results = list(executor.map(self.service.cancel_order, ["ORD-103"] * 16))

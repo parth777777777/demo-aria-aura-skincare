@@ -10,8 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.domain.confirmations import PendingActionStore
+from app.domain.demo_sessions import DemoSessionStore
 from app.domain.orders import OrderService
 from app.live.session import GeminiLiveSession
 from app.live.summary import DeterministicSummary
@@ -26,19 +30,68 @@ if not app_logger.handlers:
     app_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
     app_logger.addHandler(app_handler)
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Aura Skincare API")
-app.state.live_factory = GeminiLiveSession
-app.state.active_sessions = 0
-app.state.session_lock = asyncio.Lock()
 
 
 def _setting(name: str, default: str) -> str:
     return os.getenv(name, default)
 
 
+def _configured_origins(name: str, default: str) -> list[str]:
+    return [origin.strip() for origin in _setting(name, default).split(",") if origin.strip()]
+
+
+app = FastAPI(title="Aura Skincare API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_configured_origins(
+        "ALLOWED_HTTP_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ),
+    allow_credentials=False,
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
+app.state.live_factory = GeminiLiveSession
+app.state.active_sessions = 0
+app.state.session_lock = asyncio.Lock()
+app.state.demo_session_store = DemoSessionStore(
+    idle_timeout_seconds=int(_setting("DEMO_SESSION_IDLE_TIMEOUT_SECONDS", "1800"))
+)
+app.state.pending_action_ttl_seconds = int(_setting("PENDING_ACTION_TTL_SECONDS", "300"))
+if app.state.pending_action_ttl_seconds <= 0:
+    raise ValueError("PENDING_ACTION_TTL_SECONDS must be positive")
+
+
+class DemoSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(ord(character) < 32 for character in normalized):
+            raise ValueError("name must contain visible characters only")
+        return normalized
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "healthy"}
+
+
+@app.post("/api/demo-sessions", status_code=201)
+def create_demo_session(request: DemoSessionRequest, response: Response) -> dict[str, str]:
+    credential, session = app.state.demo_session_store.create(request.name)
+    response.headers["Cache-Control"] = "no-store"
+    return {"display_name": session["display_name"], "credential": credential}
+
+
+@app.post("/api/mock-sessions", status_code=201)
+def create_mock_session(response: Response) -> dict[str, str]:
+    context_id, _session = app.state.demo_session_store.create_mock_context()
+    response.headers["Cache-Control"] = "no-store"
+    return {"context_id": context_id}
 
 
 def _get(obj: Any, *names: str, default: Any = None) -> Any:
@@ -73,7 +126,7 @@ async def call_socket(websocket: WebSocket) -> None:
     idle_timeout = int(_setting("CALL_IDLE_TIMEOUT_SECONDS", "120"))
     tools: list[dict[str, Any]] = []
     transcript: list[dict[str, str]] = []
-    confirmation: dict[tuple[str, str], int] = {}
+    confirmation = PendingActionStore(ttl_seconds=app.state.pending_action_ttl_seconds)
     user_turn = 0
     output_turn = 0
     output_text = ""
@@ -89,6 +142,10 @@ async def call_socket(websocket: WebSocket) -> None:
     provider_field_counts: Counter[str] = Counter()
     call_model = "unknown"
     config_field_names: list[str] = []
+    call_mode = "mock_db"
+    demo_identity: dict[str, Any] | None = None
+    session_context_id: str | None = None
+    conversation_context: dict[str, Any] = {}
 
     async def emit(event_type: str, **data: Any) -> None:
         async with lock:
@@ -219,7 +276,66 @@ async def call_socket(websocket: WebSocket) -> None:
     async def dispatch_tool(call_id: str, call: Any) -> None:
         name, args = _get(call, "name", default=""), _get(call, "args", default={})
         await emit("tool_call", call_id=call_id, name=name, args=args)
-        result = execute_tool(service, name, args, confirmation_state=confirmation, finalized_user_turn=user_turn)
+        if call_mode == "account":
+            with app.state.demo_session_store.account_transaction(session_context_id or "") as account:
+                if account is None or account["identity_id"] != demo_identity["identity_id"]:
+                    result = {"ok": False, "error": {
+                        "code": "ACCOUNT_SESSION_INVALID",
+                        "message": "The demo account session expired. Create a new demo identity.",
+                    }}
+                else:
+                    conversation_context.clear()
+                    conversation_context.update(account["conversation_context"])
+                    account_service = OrderService(
+                        owned_orders=account["orders"], owned_carts=account.get("carts", []),
+                        customer_name=account["display_name"],
+                        include_mock_fixtures=False,
+                    )
+                    if name in {"list_orders", "resolve_order_reference"}:
+                        result = execute_tool(
+                            account_service, name, args, finalized_user_turn=user_turn,
+                            order_candidates=account["orders"], order_source="temporary_account",
+                            conversation_context=conversation_context,
+                        )
+                    else:
+                        result = execute_tool(
+                            account_service, name, args, confirmation_state=confirmation,
+                            finalized_user_turn=user_turn,
+                            conversation_context=conversation_context,
+                        )
+                    app.state.demo_session_store.replace_account_orders(
+                        session_context_id or "", account_service.owned_orders()
+                    )
+                    app.state.demo_session_store.replace_account_carts(
+                        session_context_id or "", account_service.owned_carts()
+                    )
+                    app.state.demo_session_store.update_context(
+                        session_context_id or "", expected_mode="account",
+                        context=conversation_context,
+                    )
+        elif name in {"list_orders", "resolve_order_reference"}:
+            candidates = service.list_orders()
+            result = execute_tool(
+                service,
+                name,
+                args,
+                finalized_user_turn=user_turn,
+                order_candidates=candidates,
+                order_source="mock_db_sample_data",
+                conversation_context=conversation_context,
+            )
+        else:
+            result = execute_tool(
+                service, name, args, confirmation_state=confirmation,
+                finalized_user_turn=user_turn,
+                conversation_context=conversation_context,
+            )
+        if call_mode != "account" and session_context_id is not None:
+            app.state.demo_session_store.update_context(
+                session_context_id,
+                expected_mode=call_mode,
+                context=conversation_context,
+            )
         order_id = (result.get("order_id") or result.get("order", {}).get("order_id")
                     or (args.get("order_id") if isinstance(args, dict) else None))
         tools.append({"name": name, "order_id": order_id, "result": result})
@@ -369,6 +485,52 @@ async def call_socket(websocket: WebSocket) -> None:
                 if live:
                     await emit("error", code="SESSION_ACTIVE", message="A call is already active on this socket.", recoverable=True)
                     continue
+                requested_mode = control.get("mode", "mock_db")
+                if not isinstance(requested_mode, str) or requested_mode not in {"mock_db", "account"}:
+                    await emit("error", code="BAD_MESSAGE", message="Unsupported call mode.", recoverable=True)
+                    continue
+                call_mode = requested_mode
+                demo_identity = None
+                if call_mode == "account":
+                    session_context_id = control.get("credential")
+                    demo_identity = app.state.demo_session_store.authorize(
+                        session_context_id, expected_mode="account"
+                    )
+                    if demo_identity is None:
+                        await emit(
+                            "error",
+                            code="ACCOUNT_SESSION_INVALID",
+                            message="The demo account session is missing or expired. Create a new demo identity.",
+                            recoverable=False,
+                        )
+                        await websocket.close(code=1008)
+                        break
+                    conversation_context = demo_identity["conversation_context"]
+                    service = OrderService(
+                        owned_orders=demo_identity["orders"],
+                        owned_carts=demo_identity.get("carts", []),
+                        customer_name=demo_identity["display_name"],
+                        include_mock_fixtures=False,
+                    )
+                else:
+                    session_context_id = control.get("context_id")
+                    if session_context_id is not None:
+                        mock_context = app.state.demo_session_store.authorize(
+                            session_context_id, expected_mode="mock_db"
+                        )
+                        if mock_context is None:
+                            await emit(
+                                "error",
+                                code="MOCK_SESSION_INVALID",
+                                message="The Mock DB context is missing or expired. Start a new Mock DB session.",
+                                recoverable=False,
+                            )
+                            await websocket.close(code=1008)
+                            break
+                        conversation_context = mock_context["conversation_context"]
+                    else:
+                        # Legacy Mock DB clients keep call-local context only.
+                        conversation_context = {}
                 key = _setting("GEMINI_API_KEY", "")
                 if not key or key == "your-gemini-api-key":
                     await emit("error", code="GEMINI_UNAVAILABLE", message="Gemini API key is not configured on the backend.", recoverable=False)

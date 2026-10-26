@@ -15,11 +15,67 @@ computes policy, eligibility, prices, or tool results.
 - The backend creates a fresh `OrderService` (session state) per connection and
   discards it on close.
 
+## Temporary demo identity API (account-mode foundation)
+
+Account mode uses a temporary demo identity, not real authentication. The
+frontend creates one after the user enters a display name:
+
+```http
+POST /api/demo-sessions
+Content-Type: application/json
+
+{"name":"Priya"}
+```
+
+The backend returns `201 Created`, with `Cache-Control: no-store`:
+
+```json
+{"display_name":"Priya","credential":"<opaque-random-token>"}
+```
+
+Names are trimmed and must contain 1–80 visible characters. The credential is
+high entropy, is returned only at creation, and is never logged or placed in a
+URL. The backend stores only its SHA-256 digest. The browser should hold the
+credential in tab-scoped `sessionStorage` across calls and screen/mode
+navigation, clearing it on explicit reset; the browser removes it when the tab
+closes. This bearer credential grants demo authorization; the entered name is
+only a label and this is not secure real-world authentication.
+
+Temporary identities live in process memory. An identity expires after 30
+minutes without an authorized account-mode call; an authorized account-mode
+`start_call` refreshes its inactivity timer. Expired records are pruned during
+session creation or credential validation. A backend process restart clears
+all identity state. This in-memory design is process-local and is not suitable
+for multiple backend workers without sticky routing/shared state.
+
+The HTTP endpoint configures CORS for `ALLOWED_HTTP_ORIGINS` (see
+`backend/.env.example`) and does not enable credentialed cookies. CORS is a
+browser policy, not authorization or rate limiting; non-browser clients can
+still call the demo-identity creation endpoint. Browser code must not log the
+returned credential.
+
+Mock DB mode can opt into cross-call structured reference context without
+creating an account or claiming fixture ownership:
+
+```http
+POST /api/mock-sessions
+```
+
+It returns `201 Created`, `Cache-Control: no-store`, and
+`{"context_id":"<opaque-random-token>"}`. The token authorizes only temporary
+conversation-reference state, not a personal identity. Store it in tab-scoped
+`sessionStorage` separately from the account credential. It expires after the
+same 30-minute inactivity interval or on backend restart. Legacy Mock DB calls
+without a context ID remain supported, with context limited to one WebSocket.
+
 ## Client → Server
 
 | Frame | Shape | Notes |
 |---|---|---|
-| JSON | `{"type":"start_call"}` | Backend opens the Gemini session. Sent once, after connect. |
+| JSON | `{"type":"start_call"}` | Backend opens the Gemini session. Sent once, after connect. Omitted `mode` retains the legacy Mock DB behavior. |
+| JSON | `{"type":"start_call","mode":"mock_db"}` | Explicit existing Mock DB flow; fixture behavior remains unchanged. |
+| JSON | `{"type":"start_call","mode":"mock_db","context_id":"<opaque-random-token>"}` | Optional mode-bound token enables structured context across Mock DB calls. It does not identify an account or change the sample fixture candidate set. |
+| JSON | `{"type":"start_call","mode":"account","credential":"<opaque-random-token>"}` | Account mode requires a valid temporary identity credential. The backend validates it before connecting to Gemini. |
 | JSON | `{"type":"end_call"}` | Graceful end: status ending, summary, status ended, then close. |
 | Binary | Raw PCM16 mono audio | 16-bit little-endian, 16 kHz. Gemini MIME label: `audio/pcm;rate=16000`. |
 
@@ -104,8 +160,30 @@ interface and is validated before sending.
 ```
 
 Initial codes: `BAD_MESSAGE`, `SESSION_ACTIVE`, `GEMINI_UNAVAILABLE`,
-`SESSION_LIMIT`, `INTERNAL`. If `recoverable` is false, the backend closes the
-socket after sending the error.
+`SESSION_LIMIT`, `ACCOUNT_SESSION_INVALID`, `MOCK_SESSION_INVALID`,
+`ACCOUNT_FEATURES_NOT_READY`, and `INTERNAL`. If `recoverable` is false, the
+backend closes the socket after sending the error. An account-mode call with a missing/invalid/expired
+credential emits `ACCOUNT_SESSION_INVALID` and closes before creating a Gemini
+session. Listing, lookup, reference resolution, and eligibility in account mode
+operate only on the temporary identity's own orders; new identities start with
+an empty list. Account cancellation uses action-bound confirmation and persists
+only that identity's temporary order state. Unknown and non-owned IDs both
+return `NOT_FOUND`; Mock DB fixtures are never candidates in account mode.
+Account-mode `build_order_cart` uses the backend catalog and stores the resulting
+temporary cart on the authorized identity; that cart is available on subsequent
+calls for that identity and is isolated from other identities and Mock DB mode.
+`list_order_carts()` returns only carts in the active authorized service, with a
+placement status that distinguishes ready, placed, unavailable, and stale-price
+quotes. This gives a later call a trusted way to discover its existing cart
+without relying on provider memory or a customer-supplied internal ID.
+Account-mode `place_order` uses the same action-bound confirmation contract as
+Mock DB and creates only a simulated Processing order owned by that temporary
+identity. Placement rechecks current prices/totals and COD eligibility; a
+changed price fails closed and requires a new cart and confirmation. Repeated
+placement for the same cart returns the original order idempotently. There is
+no payment collection or fulfilment transaction. A provided but invalid or expired Mock DB
+`context_id` emits `MOCK_SESSION_INVALID` and closes before Gemini connection;
+omitting the token keeps legacy call-local behavior.
 
 ### Audio (binary, server → client)
 
@@ -132,14 +210,23 @@ order and clears its queue on `interrupted`.
 - A second `start_call` on the same socket returns `error SESSION_ACTIVE`.
 - Synchronous function calls only. Tool responses preserve provider call `id`
   and function `name`; cancelled pending call IDs receive no response.
-- Cancellation and placement require a confirmation guard: first call returns
-  `CONFIRMATION_REQUIRED`; only a retry for the same target after a later
-  finalized user turn can execute. This prevents same-turn model actions but
-  does **not** prove what the user said. The source requirements provide no
-  exact confirmation sentence; Aria must explicitly ask for confirmation.
+- Cancellation and placement use a one-time pending-action confirmation. The
+  first mutation-tool call without `confirmation_id` returns
+  `CONFIRMATION_REQUIRED` plus an ID bound to operation, exact target, current
+  details, and finalized user turn; it does not mutate. Aria asks the customer
+  to confirm and retries the same tool/target with that ID only if the next
+  customer turn is a clear affirmative. Same-turn, stale (not the immediately
+  next user turn), expired, mismatched, changed-detail, and replay attempts do
+  not execute. Pending IDs expire after `PENDING_ACTION_TTL_SECONDS` (default
+  300 seconds). Gemini interprets natural speech, so the backend cannot
+  deterministically prove consent; ambiguous replies must fail closed and this
+  residual model-interpretation risk is accepted for the demo. The backend
+  remains authoritative for exact action, target, expiry, one-time use, and
+  business-policy rechecks.
 - Compression and session resumption are disabled in v1.
 - Server limits are configurable: concurrent sessions, call duration, idle
-  timeout, and allowed WebSocket origins. Origin checks apply when Origin exists.
+  timeout, allowed WebSocket origins, HTTP CORS origins, and temporary demo
+  identity inactivity timeout. Origin checks apply when Origin exists.
 - Malformed JSON or an unknown control message returns `error BAD_MESSAGE`
   (recoverable); the session continues.
 - Contract changes update this document first, then both sides.
