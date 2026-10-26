@@ -17,9 +17,15 @@ from app.live.session import GeminiLiveSession
 from app.live.summary import DeterministicSummary
 from app.tools.registry import execute_tool
 
-logger = logging.getLogger(__name__)
-
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+# Keep application INFO logging scoped to this namespace; do not change root.
+app_logger = logging.getLogger("app")
+app_logger.setLevel(logging.INFO)
+if not app_logger.handlers:
+    app_handler = logging.StreamHandler()
+    app_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    app_logger.addHandler(app_handler)
+logger = logging.getLogger(__name__)
 app = FastAPI(title="Aura Skincare API")
 app.state.live_factory = GeminiLiveSession
 app.state.active_sessions = 0
@@ -332,6 +338,10 @@ async def call_socket(websocket: WebSocket) -> None:
             except Exception:
                 pass
     finally:
+        # Release the slot synchronously before any cancellable teardown awaits.
+        if acquired:
+            app.state.active_sessions = max(0, app.state.active_sessions - 1)
+            acquired = False
         logger.info(
             "call summary model=%s config_fields=%s binary_frames_received=%d binary_bytes_received=%d "
             "send_audio_successes=%d send_audio_exceptions=%d max_send_audio_duration_ms=%.2f "
@@ -340,6 +350,13 @@ async def call_socket(websocket: WebSocket) -> None:
             send_audio_successes, send_audio_exceptions, max_send_audio_duration_ms,
             provider_event_count, dict(provider_field_counts),
         )
+        # Close the provider session before awaiting a possibly blocked event
+        # task, so disconnect cancellation cannot strand the live connection.
+        if live:
+            try:
+                await live.close()
+            except Exception:
+                pass
         if event_task is not None and not event_task.done():
             event_task.cancel()
             await asyncio.gather(event_task, return_exceptions=True)
@@ -348,11 +365,3 @@ async def call_socket(websocket: WebSocket) -> None:
                 await websocket.close()
             except Exception:
                 pass
-        if live:
-            try:
-                await live.close()
-            except Exception:
-                pass
-        if acquired:
-            async with app.state.session_lock:
-                app.state.active_sessions = max(0, app.state.active_sessions - 1)

@@ -149,3 +149,17 @@ order and clears its queue on `interrupted`.
 `GEMINI_API_KEY` is backend-only. `GEMINI_LIVE_MODEL` defaults to
 `gemini-3.1-flash-live-preview`. Missing credentials fail `start_call` clearly; `/health`
 does not require credentials. See `backend/.env.example` for abuse limits.
+
+## Real Gemini audio smoke test
+
+`backend/scripts/make_fixture.py` generates `backend/tests/fixtures/order_status_ord101.wav` using `espeak-ng`, then normalizes it to mono 16 kHz 16-bit PCM and prepends 300 ms of silence. WAV files are gitignored (`*.wav`) and are not committed. Regenerate the default fixture from `backend/` with `.venv/bin/python -m scripts.make_fixture`. The generator reports WAV format, duration, peak amplitude, and file size. The speech is synthetic; no customer recording is used. `ws_audio_smoke.py` also regenerates its selected fixture when it is missing (see `backend/scripts/ws_audio_smoke.py`, `run`, before WAV reading).
+
+An alternate ID-first sentence can be generated with `.venv/bin/python -m scripts.make_fixture --order-id-first`, which writes `backend/tests/fixtures/order_check_ord101.wav`.
+
+With the backend running and its real `GEMINI_API_KEY` configured in `backend/.env`, run from `backend/`:
+
+```sh
+.venv/bin/python -m scripts.ws_audio_smoke --url ws://127.0.0.1:8000/ws/call
+```
+
+Each smoke invocation opens one short real Gemini session and consumes API quota. It sends paced 20 ms PCM frames, gathers transcripts/tool events/audio, then gracefully ends the call. Optional arguments are documented by `--help`.

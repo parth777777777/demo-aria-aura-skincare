@@ -180,9 +180,16 @@ def test_missing_key_fails_start_and_health_stays_available(monkeypatch):
 
 
 def test_disconnect_cleans_up_live_session(monkeypatch):
+    import threading
+    import time
+
     instances = []
+    closed = threading.Event()
     class Quiet(FakeLive):
         def __init__(self, *args): super().__init__(*args); instances.append(self)
+        async def close(self):
+            await super().close()
+            closed.set()
     monkeypatch.setattr(main.app.state, "live_factory", Quiet)
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     with TestClient(main.app) as client:
@@ -190,6 +197,10 @@ def test_disconnect_cleans_up_live_session(monkeypatch):
             ws.send_text('{"type":"start_call"}')
             ws_receive_json(ws); ws_receive_json(ws)
         # Exiting the client context closes the websocket without end_call.
+    assert closed.wait(timeout=1)
+    deadline = time.monotonic() + 1
+    while main.app.state.active_sessions and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert instances[0].closed
     assert instances[0].cancelled
     assert main.app.state.active_sessions == 0
@@ -229,6 +240,35 @@ def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch, 
     assert "binary_bytes_received=32000" in caplog.text
     assert "send_audio_successes=50" in caplog.text
     assert "send_audio_exceptions=0" in caplog.text
+
+
+def test_websocket_logs_effective_model_and_call_summary(monkeypatch, caplog):
+    import logging
+
+    caplog.set_level(logging.INFO, logger="app.main")
+    monkeypatch.setattr(main.app.state, "live_factory", FakeLive)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    monkeypatch.setenv("GEMINI_LIVE_MODEL", "gemini-test-model")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws)
+            ws_receive_json(ws)
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended":
+                pass
+    assert "websocket call connected model=gemini-test-model" in caplog.text
+    assert "call summary model=gemini-test-model" in caplog.text
+    assert "binary_frames_received=0 binary_bytes_received=0" in caplog.text
+    assert "send_audio_successes=0 send_audio_exceptions=0" in caplog.text
+    assert "provider_events=" in caplog.text
+
+
+def test_app_info_logging_does_not_raise_root_level():
+    import logging
+
+    assert logging.getLogger("app").level == logging.INFO
+    assert logging.getLogger().level != logging.INFO
 
 
 def test_live_receive_stream_ending_exits_websocket(monkeypatch):
