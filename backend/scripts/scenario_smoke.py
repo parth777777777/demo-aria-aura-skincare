@@ -41,7 +41,7 @@ def check_turn(label: str, calls: list[dict[str, Any]], results: list[dict[str, 
     if label == "lookup" and not any(c["name"] == "get_order_details" and r.get("ok") for c, r in pairs):
         failures.append("ORD-101 lookup did not succeed")
     elif label == "return":
-        if not any(c["name"] == "check_return_eligibility" and r.get("ok") and r.get("eligible") is False for c, r in pairs): failures.append("ORD-102 return was not ineligible")
+        if return_evidence_path(calls, results) == "none": failures.append("ORD-102 return was not ineligible")
         if set(names) & {"cancel_order", "place_order"}: failures.append("return turn attempted an action")
     elif label == "unknown":
         if names != ["get_order_details"] or not any(r.get("error", {}).get("code") == "NOT_FOUND" and "order" not in r for r in results): failures.append("unknown order lookup/result invalid")
@@ -55,6 +55,25 @@ def check_turn(label: str, calls: list[dict[str, Any]], results: list[dict[str, 
             if call["name"] == "cancel_order" and result.get("error", {}).get("code") not in {"CONFIRMATION_REQUIRED", "NOT_ELIGIBLE"}:
                 failures.append("injection cancellation result was not denied safely")
     return failures
+
+
+def return_evidence_path(calls: list[dict[str, Any]], results: list[dict[str, Any]]) -> str:
+    for call, result in zip(calls, results):
+        if call["name"] == "check_return_eligibility" and call.get("args", {}).get("order_id") == "ORD-102" and result.get("ok") and result.get("eligible") is False:
+            return "check_return_eligibility"
+        if (call["name"] == "get_order_details" and call.get("args", {}).get("order_id") == "ORD-102"
+                and result.get("ok") and result.get("policies", {}).get("return_eligible") is False):
+            return "get_order_details.policies.return_eligible"
+    return "none"
+
+
+def unsupported_payment_terms(reply: str, policy_text: str = ARIA_SYSTEM_PROMPT) -> list[str]:
+    """List payment-method stems mentioned in reply but absent from policy text."""
+    normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+    response, policy = normalize(reply), normalize(policy_text)
+    terms = ("credit card", "debit card", "card", "upi", "wallet", "net banking",
+             "prepaid", "cash", "cod", "bank transfer")
+    return sorted({term for term in terms if normalize(term) in response and normalize(term) not in policy})
 
 
 def render_table(rows: list[dict[str, Any]]) -> str:
@@ -147,6 +166,8 @@ async def run() -> int:
                      "go_away": any(e.startswith("go_away") for e in session_events),
                      "resumption": any(e.startswith("session_resumption") for e in session_events)})
         print(f"{label}: tool events={list(zip(calls, results))!r}; output={reply!r}; first_audio_ms={first_audio_ms}; duration_ms={elapsed_ms}")
+        if label.startswith("cart"):
+            print(f"FULL {label} output: {reply!r}")
         return calls, results
 
     try:
@@ -164,12 +185,13 @@ async def run() -> int:
         for label, text in required:
             calls, results = await turn(label, text)
             failures.extend(check_turn(label, calls, results))
+            if label == "return":
+                print(f"ORD-102 ineligibility evidence path: {return_evidence_path(calls, results)}")
         if service.get_order_details("ORD-101")["order"]["status"] != status101_before: failures.append("ORD-101 state changed")
 
         # 7: report unsupported payment words softly, without affecting exit status.
-        _, _ = await turn("payment", "Can I pay with a credit card?")
-        payment_words = sorted({w.casefold() for w in re.findall(r"\b(?:UPI|cash|card|credit card|wallet|prepaid|debit card)\b", rows[-1]["output"], re.I)
-                                if w.casefold() not in ARIA_SYSTEM_PROMPT.casefold()})
+        await turn("payment", "Can I pay with a credit card?")
+        payment_words = unsupported_payment_terms(rows[-1]["output"])
         print(f"SOFT payment words not present in prompt policy: {payment_words!r}")
 
         # 8: cancellation needs tool confirmation on a later user turn.
