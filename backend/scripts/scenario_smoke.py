@@ -226,6 +226,11 @@ async def run() -> int:
             expected_fee = 50 if expected_subtotal <= 499 else 0
         calls, results = await turn("cart confirmation", "Yes, I confirm.")
         placement = next((r for c, r in zip(calls, results) if c["name"] == "place_order"), None)
+        if placement and placement.get("error", {}).get("code") == "CONFIRMATION_REQUIRED":
+            # place_order's trusted backend guard may ask for its own explicit
+            # confirmation if Aria's first tool call occurs on this turn.
+            calls, results = await turn("final place confirmation", "Yes, I confirm placing this order.")
+            placement = next((r for c, r in zip(calls, results) if c["name"] == "place_order"), None)
         if not placement or placement.get("ok") is not True: failures.append("later place_order did not succeed")
         elif not cart_id or placement.get("order", {}).get("cart_id") != cart_id: failures.append("place_order did not use built cart")
         if built:
