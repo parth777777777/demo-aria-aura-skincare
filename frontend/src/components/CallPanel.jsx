@@ -17,6 +17,7 @@ export function CallPanel({
   voiceState,
   time,
   callActive,
+  debug,
   runReplay,
   runCall,
   navigateSummary,
@@ -108,14 +109,14 @@ export function CallPanel({
         <p className="mt-3 text-center text-sm text-muted-foreground">
           You're talking to an AI care agent
         </p>
-        {import.meta.env.DEV && ScenarioPicker && (
+        {debug && import.meta.env.DEV && ScenarioPicker && (
           <ScenarioPicker
             scenario={scenario}
             runReplay={runReplay}
             runScenario={runScenario}
           />
         )}
-        {import.meta.env.DEV && (
+        {debug && import.meta.env.DEV && (
           <Button
             variant="outline"
             className="mt-2 w-full"

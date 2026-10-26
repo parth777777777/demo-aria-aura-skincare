@@ -252,6 +252,7 @@ function App() {
               voiceState={voiceState}
               time={time}
               callActive={callActive}
+              debug={debug}
               runReplay={runReplay}
               runCall={() => {
                 if (callActive) endCall();
