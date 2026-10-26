@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import time
-from collections import Counter
+from collections import Counter, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -59,7 +59,13 @@ async def call_socket(websocket: WebSocket) -> None:
     await websocket.accept()
     live = None
     event_task: asyncio.Task[None] | None = None
+    greeting_task: asyncio.Task[None] | None = None
     live_closed = asyncio.Event()
+    provider_ready = asyncio.Event()
+    greeting_done = asyncio.Event()
+    greeting_pending = False
+    customer_audio_started = False
+    startup_audio: deque[bytes] = deque(maxlen=100)
     acquired = False
     lock = asyncio.Lock()
     started: float | None = None
@@ -120,6 +126,7 @@ async def call_socket(websocket: WebSocket) -> None:
 
     async def _consume_provider_events() -> None:
         nonlocal output_turn, output_text, user_turn, provider_event_count
+        provider_ready.set()
         async for event in live.events():
             if ended:
                 return
@@ -155,8 +162,15 @@ async def call_socket(websocket: WebSocket) -> None:
             cancelled_ids.update(cancelled)
             content = _get(event, "server_content", "serverContent")
             if content:
-                interim = _get(content, "interim_input_transcription", "interimInputTranscription")
-                final_input = _get(content, "input_transcription", "inputTranscription")
+                # The startup cue is sent as user-role client content by the
+                # SDK adapter. Suppress its input-side transcription so it can
+                # never become a customer transcript or advance confirmation.
+                if not customer_audio_started:
+                    interim = None
+                    final_input = None
+                else:
+                    interim = _get(content, "interim_input_transcription", "interimInputTranscription")
+                    final_input = _get(content, "input_transcription", "inputTranscription")
                 for transcription, final in ((interim, False), (final_input, True)):
                     text = _get(transcription, "text") if transcription else None
                     if text:
@@ -188,6 +202,8 @@ async def call_socket(websocket: WebSocket) -> None:
                     transcript.append({"role": "aria", "text": output_text})
                     await emit("transcript", turn_id=f"a{output_turn}", role="aria", text=output_text, final=True)
                     output_text = ""
+                if _get(content, "turn_complete", "turnComplete", default=False) and greeting_pending:
+                    greeting_done.set()
             tool_call = _get(event, "tool_call", "toolCall")
             if tool_call:
                 calls = _get(tool_call, "function_calls", "functionCalls", default=[]) or []
@@ -211,6 +227,57 @@ async def call_socket(websocket: WebSocket) -> None:
         if call_id not in cancelled_ids:
             await live.send_tool_response(call_id, name, result)
 
+    async def send_startup_greeting() -> None:
+        try:
+            await provider_ready.wait()
+            if ended:
+                return
+            await live.send_text("The customer just connected. Greet them and introduce yourself briefly.")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if not ended:
+                await emit("error", code="GEMINI_UNAVAILABLE", message="Could not start the greeting.", recoverable=True)
+                await finish("error")
+        finally:
+            if ended:
+                greeting_done.set()
+
+    async def forward_audio(frame: bytes) -> bool:
+        nonlocal customer_audio_started
+        nonlocal send_audio_successes, send_audio_exceptions
+        nonlocal max_send_audio_duration_ms, audio_frames_forwarded, audio_bytes_forwarded
+        customer_audio_started = True
+        send_started = time.perf_counter()
+        try:
+            await live.send_audio(frame)
+            send_audio_successes += 1
+        except Exception as exc:
+            send_audio_exceptions += 1
+            error_message = str(exc)
+            api_key = _setting("GEMINI_API_KEY", "")
+            if api_key:
+                error_message = error_message.replace(api_key, "[redacted]")
+            logger.warning("send_audio failed: %s: %s", type(exc).__name__, error_message)
+            await emit(
+                "error",
+                code="GEMINI_INPUT_FAILED",
+                message="Audio could not be forwarded to Gemini. Please restart the call.",
+                recoverable=False,
+            )
+            await finish("error")
+            return False
+        finally:
+            duration_ms = (time.perf_counter() - send_started) * 1000
+            max_send_audio_duration_ms = max(max_send_audio_duration_ms, duration_ms)
+            if duration_ms > 250:
+                logger.warning("slow send_audio duration_ms=%.2f", duration_ms)
+        audio_frames_forwarded += 1
+        audio_bytes_forwarded += len(frame)
+        if audio_frames_forwarded % 50 == 0:
+            await emit("audio_forwarded", frames=audio_frames_forwarded, bytes=audio_bytes_forwarded)
+        return True
+
     cancelled_ids: set[str] = set()
     service = OrderService()
     try:
@@ -229,9 +296,15 @@ async def call_socket(websocket: WebSocket) -> None:
                 break
             receive_task = asyncio.create_task(websocket.receive())
             close_task = asyncio.create_task(live_closed.wait()) if event_task is not None else None
+            greeting_done_task = (
+                asyncio.create_task(greeting_done.wait())
+                if greeting_pending and not greeting_done.is_set() else None
+            )
             waiters = {receive_task}
             if close_task is not None:
                 waiters.add(close_task)
+            if greeting_done_task is not None:
+                waiters.add(greeting_done_task)
             try:
                 done, pending = await asyncio.wait(
                     waiters, timeout=min(idle_timeout, remaining),
@@ -253,41 +326,36 @@ async def call_socket(websocket: WebSocket) -> None:
                     await emit("error", code="GEMINI_UNAVAILABLE", message="The Gemini session closed unexpectedly.", recoverable=True)
                     await finish("error")
                 break
+            if greeting_done_task is not None and greeting_done_task in done:
+                while startup_audio:
+                    frame = startup_audio.popleft()
+                    if not await forward_audio(frame):
+                        break
+                if ended:
+                    break
+                if receive_task not in done:
+                    continue
             message = receive_task.result()
             if message.get("type") == "websocket.disconnect":
                 break
             if message.get("bytes") is not None:
+                binary_frames_received += 1
+                binary_bytes_received += len(message["bytes"])
                 if live:
-                    binary_frames_received += 1
-                    binary_bytes_received += len(message["bytes"])
-                    send_started = time.perf_counter()
-                    try:
-                        await live.send_audio(message["bytes"])
-                        send_audio_successes += 1
-                    except Exception as exc:
-                        send_audio_exceptions += 1
-                        error_message = str(exc)
-                        api_key = _setting("GEMINI_API_KEY", "")
-                        if api_key:
-                            error_message = error_message.replace(api_key, "[redacted]")
-                        logger.warning("send_audio failed: %s: %s", type(exc).__name__, error_message)
-                        await emit(
-                            "error",
-                            code="GEMINI_INPUT_FAILED",
-                            message="Audio could not be forwarded to Gemini. Please restart the call.",
-                            recoverable=False,
-                        )
-                        await finish("error")
+                    if greeting_pending and not greeting_done.is_set():
+                        # Hold a bounded startup window without interleaving
+                        # realtime audio with send_client_content. End-call
+                        # control remains readable by this receive loop.
+                        startup_audio.append(message["bytes"])
+                        continue
+                    while startup_audio:
+                        if not await forward_audio(startup_audio.popleft()):
+                            break
+                    if ended:
                         break
-                    finally:
-                        duration_ms = (time.perf_counter() - send_started) * 1000
-                        max_send_audio_duration_ms = max(max_send_audio_duration_ms, duration_ms)
-                        if duration_ms > 250:
-                            logger.warning("slow send_audio duration_ms=%.2f", duration_ms)
-                    audio_frames_forwarded += 1
-                    audio_bytes_forwarded += len(message["bytes"])
-                    if audio_frames_forwarded % 50 == 0:
-                        await emit("audio_forwarded", frames=audio_frames_forwarded, bytes=audio_bytes_forwarded)
+                    await forward_audio(message["bytes"])
+                    if ended:
+                        break
                 continue
             raw = message.get("text")
             try:
@@ -319,7 +387,9 @@ async def call_socket(websocket: WebSocket) -> None:
                     started = time.monotonic()
                     live_closed.clear()
                     await emit("status", state="live")
+                    greeting_pending = True
                     event_task = asyncio.create_task(provider_events())
+                    greeting_task = asyncio.create_task(send_startup_greeting())
                 except Exception:
                     await emit("error", code="GEMINI_UNAVAILABLE", message="Could not start the Gemini session.", recoverable=False)
                     await finish("error")
@@ -367,6 +437,9 @@ async def call_socket(websocket: WebSocket) -> None:
                     handler_cancelled = True
             except Exception:
                 pass
+        if greeting_task is not None and not greeting_task.done():
+            greeting_task.cancel()
+            await asyncio.gather(greeting_task, return_exceptions=True)
         if event_task is not None and not event_task.done():
             event_task.cancel()
             await asyncio.gather(event_task, return_exceptions=True)

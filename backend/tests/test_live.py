@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 from types import SimpleNamespace as NS
 
 import anyio
@@ -43,7 +44,9 @@ class FakeLive:
 
     async def connect(self): self.connected = True
     async def send_audio(self, data): self.audio.append(data)
-    async def send_text(self, text): self.text.append(text)
+    async def send_text(self, text):
+        self.text.append(text)
+        await self.queue.put(NS(server_content=NS(turn_complete=True)))
     async def send_tool_response(self, call_id, name, result): self.responses.append((call_id, name, result))
     async def close(self): self.closed = True
     async def events(self):
@@ -73,6 +76,276 @@ def test_send_text_uses_client_content_with_explicit_user_role():
 
     asyncio.run(exercise())
 
+
+def test_ws_startup_greeting_is_once_after_consumer_ready_and_uses_normal_events(monkeypatch):
+    instances = []
+    class Greeting(FakeLive):
+        def __init__(self, *args):
+            super().__init__(*args); self.ready = asyncio.Event(); instances.append(self)
+        async def events(self):
+            self.ready.set()
+            async for event in super().events():
+                yield event
+        async def send_text(self, text):
+            assert self.ready.is_set()
+            self.text.append(text)
+            await self.queue.put(NS(server_content=NS(
+                input_transcription=NS(text="synthetic cue"),
+                output_transcription=NS(text="Hello, welcome to Aura."),
+                model_turn=NS(parts=[NS(inline_data=NS(data=b"greeting-audio"))]),
+                turn_complete=True, interrupted=False)))
+    monkeypatch.setattr(main.app.state, "live_factory", Greeting)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            events = []
+            for _ in range(8):
+                frame = ws_receive(ws)
+                if frame.get("bytes") is not None:
+                    assert frame["bytes"] == b"greeting-audio"
+                    continue
+                event = json.loads(frame["text"])
+                events.append(event)
+                if event.get("text") == "Hello, welcome to Aura." and event.get("final"):
+                    break
+            assert instances[0].text == ["The customer just connected. Greet them and introduce yourself briefly."]
+            assert not any(event.get("role") == "user" for event in events)
+            assert any(event.get("role") == "aria" and event.get("final") is False for event in events)
+            assert any(event.get("role") == "aria" and event.get("final") is True for event in events)
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended":
+                pass
+
+    assert instances[0].ready.is_set()
+
+
+def test_ws_startup_greeting_failures_and_end_during_send_clean_up(monkeypatch):
+    instances = []
+    class BrokenConnect(FakeLive):
+        def __init__(self, *args): super().__init__(*args); instances.append(self)
+        async def connect(self): raise RuntimeError("connect failed")
+    monkeypatch.setattr(main.app.state, "live_factory", BrokenConnect)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            assert ws_receive_json(ws)["state"] == "connecting"
+            assert ws_receive_json(ws)["code"] == "GEMINI_UNAVAILABLE"
+    assert not instances[0].text
+
+    class BrokenGreeting(FakeLive):
+        def __init__(self, *args): super().__init__(*args); instances.append(self)
+        async def send_text(self, text): raise RuntimeError("send failed")
+    monkeypatch.setattr(main.app.state, "live_factory", BrokenGreeting)
+    try:
+        with TestClient(main.app) as client:
+            with client.websocket_connect("/ws/call") as ws:
+                ws.send_text('{"type":"start_call"}')
+                observed = []
+                for _ in range(10):
+                    event = ws_receive_json(ws)
+                    observed.append(event)
+                    if event.get("state") == "ended": break
+    except BaseException:
+        # Starlette may surface cancellation while the server closes the failed call.
+        pass
+    assert any(event.get("code") == "GEMINI_UNAVAILABLE" for event in observed)
+    assert instances[-1].closed and instances[-1].cancelled
+    assert main.app.state.active_sessions == 0
+
+    entered = threading.Event()
+    class BlockingGreeting(FakeLive):
+        def __init__(self, *args): super().__init__(*args); instances.append(self)
+        async def send_text(self, text):
+            entered.set()
+            await asyncio.Event().wait()
+    monkeypatch.setattr(main.app.state, "live_factory", BlockingGreeting)
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws); ws_receive_json(ws)
+            assert entered.wait(timeout=1)
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended":
+                pass
+
+    assert instances[-1].closed and instances[-1].cancelled
+    assert main.app.state.active_sessions == 0
+
+
+def test_ws_startup_audio_is_held_fifo_and_oldest_frame_dropped(monkeypatch):
+    instances = []
+    class PendingGreeting(FakeLive):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.cue_sent = threading.Event()
+            self.release = threading.Event()
+            self.audio_received = threading.Event()
+            instances.append(self)
+        async def send_text(self, text):
+            self.text.append(text)
+            self.cue_sent.set()
+        async def events(self):
+            try:
+                await asyncio.to_thread(self.release.wait)
+                yield NS(server_content=NS(turn_complete=True))
+                while True:
+                    item = await self.queue.get()
+                    if item is None: return
+                    yield item
+            finally:
+                self.cancelled = True
+        async def send_audio(self, data):
+            self.audio.append(data)
+            if len(self.audio) == self.expected_count:
+                self.audio_received.set()
+
+    monkeypatch.setattr(main.app.state, "live_factory", PendingGreeting)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws); ws_receive_json(ws)
+            instance = instances[0]
+            instance.expected_count = 4
+            assert instance.cue_sent.wait(timeout=1)
+            frames = [bytes([n]) for n in (1, 2, 3)]
+            for frame in frames:
+                ws.send_bytes(frame)
+            # A later control response proves all earlier binary frames have
+            # been consumed while the fake greeting is still pending.
+            ws.send_text('{"type":"start_call"}')
+            while ws_receive_json(ws).get("code") != "SESSION_ACTIVE":
+                pass
+            assert instance.audio == []
+            instance.release.set()
+            ws.send_bytes(b"trigger")
+            assert instance.audio_received.wait(timeout=3)
+            assert instance.audio == frames + [b"trigger"]
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended":
+                pass
+
+    # Repeat with 101 queued frames: deque(maxlen=100) retains the newest 100.
+    instances.clear()
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws); ws_receive_json(ws)
+            instance = instances[0]
+            instance.expected_count = 101
+            assert instance.cue_sent.wait(timeout=1)
+            frames = [index.to_bytes(2, "big") for index in range(101)]
+            for frame in frames:
+                ws.send_bytes(frame)
+            ws.send_text('{"type":"start_call"}')
+            while ws_receive_json(ws).get("code") != "SESSION_ACTIVE":
+                pass
+            assert instance.audio == []
+            instance.release.set()
+            ws.send_bytes(b"trigger")
+            assert instance.audio_received.wait(timeout=3)
+            assert instance.audio == frames[1:] + [b"trigger"]
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended":
+                pass
+
+
+def test_buffered_audio_uses_shared_counters_and_acknowledgment(monkeypatch, caplog):
+    instances = []
+    class Pending(FakeLive):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.release = threading.Event()
+            self.cue_sent = threading.Event()
+            self.sent_50 = threading.Event()
+            instances.append(self)
+        async def send_text(self, text):
+            self.text.append(text); self.cue_sent.set()
+        async def events(self):
+            await asyncio.to_thread(self.release.wait)
+            yield NS(server_content=NS(turn_complete=True))
+            while True:
+                item = await self.queue.get()
+                if item is None: return
+                yield item
+        async def send_audio(self, data):
+            self.audio.append(data)
+            if len(self.audio) == 50: self.sent_50.set()
+
+    monkeypatch.setattr(main.app.state, "live_factory", Pending)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws); ws_receive_json(ws)
+            live = instances[0]
+            assert live.cue_sent.wait(timeout=1)
+            frames = [bytes([index]) * 2 for index in range(50)]
+            for frame in frames: ws.send_bytes(frame)
+            ws.send_text('{"type":"start_call"}')
+            while ws_receive_json(ws).get("code") != "SESSION_ACTIVE": pass
+            assert live.audio == []
+            live.release.set()
+            assert live.sent_50.wait(timeout=2)
+            forwarded = ws_receive_json(ws)
+            while forwarded.get("type") != "audio_forwarded":
+                forwarded = ws_receive_json(ws)
+            assert forwarded["frames"] == 50
+            assert forwarded["bytes"] == sum(map(len, frames))
+            assert live.audio == frames
+            ws.send_text('{"type":"end_call"}')
+            while ws_receive_json(ws).get("state") != "ended": pass
+    assert "binary_frames_received=50" in caplog.text
+    assert "binary_bytes_received=100" in caplog.text
+    assert "send_audio_successes=50 send_audio_exceptions=0" in caplog.text
+
+
+def test_buffered_audio_send_failure_uses_normal_gemini_input_error(monkeypatch):
+    instances = []
+    class PendingFailure(FakeLive):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.release = threading.Event()
+            self.cue_sent = threading.Event()
+            instances.append(self)
+        async def send_text(self, text):
+            self.text.append(text); self.cue_sent.set()
+        async def events(self):
+            try:
+                await asyncio.to_thread(self.release.wait)
+                yield NS(server_content=NS(turn_complete=True))
+                while True:
+                    item = await self.queue.get()
+                    if item is None: return
+                    yield item
+            finally:
+                self.cancelled = True
+        async def send_audio(self, data): raise RuntimeError("fake send failure")
+
+    monkeypatch.setattr(main.app.state, "live_factory", PendingFailure)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_text('{"type":"start_call"}')
+            ws_receive_json(ws); ws_receive_json(ws)
+            live = instances[0]
+            assert live.cue_sent.wait(timeout=1)
+            ws.send_bytes(b"buffered")
+            ws.send_text('{"type":"start_call"}')
+            while ws_receive_json(ws).get("code") != "SESSION_ACTIVE": pass
+            live.release.set()
+            observed = []
+            for _ in range(8):
+                event = ws_receive_json(ws)
+                observed.append(event)
+                if event.get("state") == "ended": break
+    error = next(event for event in observed if event.get("type") == "error")
+    assert error["code"] == "GEMINI_INPUT_FAILED"
+    assert error["recoverable"] is False
+    assert live.closed and live.cancelled
+    assert main.app.state.active_sessions == 0
 
 def test_events_receives_successive_complete_interactions_and_tool_followup():
     class SDKSession:
@@ -157,7 +430,10 @@ def test_ws_start_errors_malformed_session_active_audio_transcripts_tools_cancel
             events = [ws_receive_json(ws), ws_receive_json(ws)]
             assert [event["state"] for event in events] == ["connecting", "live"]
             ws.send_text('{"type":"start_call"}')
-            assert ws_receive_json(ws)["code"] == "SESSION_ACTIVE"
+            duplicate_start = ws_receive_json(ws)
+            if duplicate_start.get("type") != "error":
+                duplicate_start = ws_receive_json(ws)
+            assert duplicate_start["code"] == "SESSION_ACTIVE"
             ws.send_bytes(b"pcm")
             got = []
             for _ in range(12):
@@ -321,6 +597,8 @@ def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch, 
             for _ in range(50):
                 ws.send_bytes(b"x" * 640)
             acknowledgment = ws_receive_json(ws, timeout=2)
+            if acknowledgment["type"] == "provider_activity":
+                acknowledgment = ws_receive_json(ws, timeout=2)
             assert acknowledgment["type"] == "audio_forwarded"
             assert acknowledgment["frames"] == 50
             assert acknowledgment["bytes"] == 32000
