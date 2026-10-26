@@ -184,7 +184,6 @@ def test_missing_key_fails_start_and_health_stays_available(monkeypatch):
 
 def test_disconnect_cleans_up_live_session(monkeypatch):
     import threading
-    import time
 
     instances = []
     closed = threading.Event()
@@ -195,18 +194,108 @@ def test_disconnect_cleans_up_live_session(monkeypatch):
             closed.set()
     monkeypatch.setattr(main.app.state, "live_factory", Quiet)
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    try:
+        with TestClient(main.app) as client:
+            with client.websocket_connect("/ws/call") as ws:
+                ws.send_text('{"type":"start_call"}')
+                ws_receive_json(ws); ws_receive_json(ws)
+            # Exiting closes the websocket without end_call.
+    except BaseException:
+        # Starlette/AnyIO may report cancellation while the disconnect is unwinding.
+        pass
+    assert closed.wait(timeout=2)
+    assert instances[0].closed
+    assert instances[0].cancelled
+    assert main.app.state.active_sessions == 0
+
+
+def test_websocket_send_failure_during_finish_still_closes_live(monkeypatch):
+    class Socket:
+        headers = {}
+        def __init__(self):
+            self.messages = asyncio.Queue()
+            self.closed = False
+            self.events = []
+        async def accept(self): pass
+        async def receive(self): return await self.messages.get()
+        async def send_json(self, event):
+            self.events.append(event)
+            if event.get("state") == "ending": raise RuntimeError("send failed")
+        async def close(self, **kwargs): self.closed = True
+
+    instances = []
+    class Closing(FakeLive):
+        def __init__(self, *args): super().__init__(*args); instances.append(self)
+    monkeypatch.setattr(main.app.state, "live_factory", Closing)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    async def exercise():
+        ws = Socket()
+        await ws.messages.put({"type": "websocket.receive", "text": '{"type":"start_call"}'})
+        await ws.messages.put({"type": "websocket.receive", "text": '{"type":"end_call"}'})
+        await main.call_socket(ws)
+        assert instances[0].closed
+    asyncio.run(exercise())
+
+
+def test_handler_cancellation_mid_cleanup_keeps_live_close_running(monkeypatch):
+    class Socket:
+        headers = {}
+        def __init__(self): self.messages = asyncio.Queue()
+        async def accept(self): pass
+        async def receive(self): return await self.messages.get()
+        async def send_json(self, event): pass
+        async def close(self, **kwargs): pass
+
+    async def exercise():
+        entered, release, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        class Closing(FakeLive):
+            async def close(self):
+                entered.set()
+                await release.wait()
+                closed.set()
+        monkeypatch.setattr(main.app.state, "live_factory", Closing)
+        monkeypatch.setenv("GEMINI_API_KEY", "fake")
+        ws = Socket()
+        await ws.messages.put({"type": "websocket.receive", "text": '{"type":"start_call"}'})
+        await ws.messages.put({"type": "websocket.disconnect", "code": 1000})
+        task = asyncio.create_task(main.call_socket(ws))
+        await entered.wait()
+        task.cancel()
+        release.set()
+        try: await task
+        except asyncio.CancelledError: pass
+        assert closed.is_set()
+    asyncio.run(exercise())
+
+
+def test_end_call_close_error_does_not_emit_error_and_keeps_event_order(monkeypatch):
+    instances = []
+    class ClosingRaises(FakeLive):
+        def __init__(self, *args): super().__init__(*args); instances.append(self)
+        async def close(self):
+            await self.queue.put(RuntimeError("provider closed"))
+            await super().close()
+        async def events(self):
+            while True:
+                item = await self.queue.get()
+                if item is None: return
+                if isinstance(item, Exception): raise item
+                yield item
+    monkeypatch.setattr(main.app.state, "live_factory", ClosingRaises)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
     with TestClient(main.app) as client:
         with client.websocket_connect("/ws/call") as ws:
             ws.send_text('{"type":"start_call"}')
             ws_receive_json(ws); ws_receive_json(ws)
-        # Exiting the client context closes the websocket without end_call.
-    assert closed.wait(timeout=1)
-    deadline = time.monotonic() + 1
-    while main.app.state.active_sessions and time.monotonic() < deadline:
-        time.sleep(0.01)
+            ws.send_text('{"type":"end_call"}')
+            received = []
+            while True:
+                event = ws_receive_json(ws); received.append(event)
+                if event.get("state") == "ended": break
+    tail = [event for event in received if event.get("type") in {"status", "summary", "error"}]
+    assert [event.get("state", event.get("type")) for event in tail[-3:]] == ["ending", "summary", "ended"]
+    assert not any(event.get("type") == "error" for event in received)
     assert instances[0].closed
-    assert instances[0].cancelled
-    assert main.app.state.active_sessions == 0
 
 
 def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch, caplog):

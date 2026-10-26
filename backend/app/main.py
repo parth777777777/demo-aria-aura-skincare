@@ -352,9 +352,19 @@ async def call_socket(websocket: WebSocket) -> None:
         )
         # Close the provider session before awaiting a possibly blocked event
         # task, so disconnect cancellation cannot strand the live connection.
+        handler_cancelled = False
         if live:
+            close_task = asyncio.create_task(live.close())
             try:
-                await live.close()
+                await asyncio.shield(close_task)
+            except asyncio.CancelledError:
+                # Preserve close completion when the handler itself is cancelled.
+                # Cancellation of the child is distinct: the shield keeps it alive.
+                handler_cancelled = asyncio.current_task().cancelling() > 0
+                try:
+                    await asyncio.shield(close_task)
+                except asyncio.CancelledError:
+                    handler_cancelled = True
             except Exception:
                 pass
         if event_task is not None and not event_task.done():
@@ -365,3 +375,5 @@ async def call_socket(websocket: WebSocket) -> None:
                 await websocket.close()
             except Exception:
                 pass
+        if handler_cancelled:
+            raise asyncio.CancelledError
