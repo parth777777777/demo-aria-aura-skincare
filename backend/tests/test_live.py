@@ -559,11 +559,14 @@ def test_end_call_close_error_does_not_emit_error_and_keeps_event_order(monkeypa
             await self.queue.put(RuntimeError("provider closed"))
             await super().close()
         async def events(self):
-            while True:
-                item = await self.queue.get()
-                if item is None: return
-                if isinstance(item, Exception): raise item
-                yield item
+            try:
+                while True:
+                    item = await self.queue.get()
+                    if item is None: return
+                    if isinstance(item, Exception): raise item
+                    yield item
+            finally:
+                self.cancelled = True
     monkeypatch.setattr(main.app.state, "live_factory", ClosingRaises)
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     with TestClient(main.app) as client:
@@ -579,6 +582,8 @@ def test_end_call_close_error_does_not_emit_error_and_keeps_event_order(monkeypa
     assert [event.get("state", event.get("type")) for event in tail[-3:]] == ["ending", "summary", "ended"]
     assert not any(event.get("type") == "error" for event in received)
     assert instances[0].closed
+    assert instances[0].cancelled
+    assert main.app.state.active_sessions == 0
 
 
 def test_audio_forwarding_acknowledges_frames_sent_to_live_session(monkeypatch, caplog):
@@ -822,6 +827,54 @@ def test_account_order_placement_confirms_persists_and_retries_idempotently(monk
     assert [order["order_id"] for order in identity["orders"]] == ["ORD-201"]
 
 
+def test_unrelated_turn_after_placement_quote_does_not_place_order(monkeypatch):
+    store = main.DemoSessionStore()
+    credential, _ = store.create("No Placement")
+    seed = main.OrderService(include_mock_fixtures=False)
+    cart = seed.build_order_cart(
+        [{"product_id": "green-tea-toner", "quantity": 1}], "PREPAID"
+    )["cart"]
+    assert store.replace_account_carts(credential, [cart])
+
+    class UnrelatedTurn(FakeLive):
+        async def send_audio(self, data):
+            await self.queue.put(NS(tool_call=NS(function_calls=[NS(
+                id="place", name="place_order", args={"cart_id": cart["cart_id"]},
+            )])))
+
+        async def send_tool_response(self, call_id, name, result):
+            await super().send_tool_response(call_id, name, result)
+            if result.get("error", {}).get("code") == "CONFIRMATION_REQUIRED":
+                # Script the provider's next decision: the user changes topic,
+                # so it must not issue the confirmation-bearing mutation call.
+                await self.queue.put(NS(server_content=NS(
+                    input_transcription=NS(text="What are your delivery hours?"),
+                    turn_complete=False,
+                )))
+                await self.queue.put(NS(go_away=NS(time_left="1s")))
+
+    monkeypatch.setattr(main.app.state, "live_factory", UnrelatedTurn)
+    monkeypatch.setattr(main.app.state, "demo_session_store", store)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    with TestClient(main.app) as client:
+        with client.websocket_connect("/ws/call") as ws:
+            ws.send_json({"type": "start_call", "mode": "account", "credential": credential})
+            ws_receive_json(ws); ws_receive_json(ws)
+            ws.send_bytes(b"synthetic audio")
+            events = []
+            for _ in range(30):
+                event = ws_receive_json(ws)
+                events.append(event)
+                if event.get("state") == "ended":
+                    break
+
+    results = [event["result"] for event in events if event.get("type") == "tool_result"]
+    assert len(results) == 1
+    assert results[0]["error"]["code"] == "CONFIRMATION_REQUIRED"
+    identity = store.authorize(credential, expected_mode="account")
+    assert identity["orders"] == []
+
+
 def test_mock_db_start_call_without_mode_remains_supported(monkeypatch):
     instances = []
 
@@ -1004,11 +1057,14 @@ def test_interrupted_audio_provider_error_and_confirmation_guard(monkeypatch):
                 interrupted=True, turn_complete=False)))
             await self.queue.put(RuntimeError("provider failure"))
         async def events(self):
-            while True:
-                item = await self.queue.get()
-                if item is None: return
-                if isinstance(item, Exception): raise item
-                yield item
+            try:
+                while True:
+                    item = await self.queue.get()
+                    if item is None: return
+                    if isinstance(item, Exception): raise item
+                    yield item
+            finally:
+                self.cancelled = True
     monkeypatch.setattr(main.app.state, "live_factory", Interrupting)
     monkeypatch.setenv("GEMINI_API_KEY", "fake")
     with TestClient(main.app) as client:
@@ -1031,6 +1087,8 @@ def test_interrupted_audio_provider_error_and_confirmation_guard(monkeypatch):
             assert any(e.get("text") == "Please confirm" and e.get("final") is True for e in observed)
             assert speaker_audio == b"speaker-pcm"
     assert instances[0].closed
+    assert instances[0].cancelled
+    assert main.app.state.active_sessions == 0
 
     from app.tools.registry import execute_tool
     from app.domain.orders import OrderService
