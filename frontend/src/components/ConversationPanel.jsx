@@ -1,6 +1,11 @@
-import { AlertCircle, Leaf, Sparkles } from "lucide-react";
+import { AlertCircle, Sparkles } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ui/conversation";
+import { Persona } from "@/components/ai-elements/persona.jsx";
 import { OrderCard } from "./OrderCard.jsx";
 import { SampleOrders } from "./SampleOrders.jsx";
 import { getOrderDisplays } from "../lib/orderRendering.js";
@@ -20,7 +25,6 @@ export function ConversationPanel({
   voiceState,
   errorMessage,
   sessionLimit,
-  transcriptRef,
   debug,
   micStats = { frames: 0, bytes: 0 },
   audioForwarded = { frames: 0, bytes: 0 },
@@ -33,7 +37,7 @@ export function ConversationPanel({
   const orderDisplays = getOrderDisplays(state.tools);
   return (
     <section
-      className="flex min-w-0 flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm lg:min-h-[730px]"
+      className="flex min-w-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm lg:min-h-[730px]"
       aria-labelledby="conversation-title"
     >
       <div className="flex items-center justify-between border-b border-border px-5 py-5 sm:px-[29px]">
@@ -120,12 +124,11 @@ export function ConversationPanel({
           })}
         </div>
       )}
-      <ScrollArea
-        className="min-h-[300px] flex-1 overflow-hidden px-4 py-5 sm:px-7"
-        ref={transcriptRef}
-        aria-live="polite"
+      <Conversation
+        className="min-h-[300px] flex-1 overflow-hidden"
+        aria-label="Conversation transcript"
       >
-        <div className="min-w-0">
+        <ConversationContent className="min-w-0 px-4 py-5 sm:px-7">
           {state.turns.length === 0 && (
             <div className="mx-auto flex min-h-[300px] max-w-[420px] flex-col items-center justify-center text-center">
               <div className="mb-4 grid size-11 place-items-center rounded-full bg-muted text-primary">
@@ -146,9 +149,26 @@ export function ConversationPanel({
               className={`mb-5 flex max-w-[96%] gap-3 animate-in fade-in slide-in-from-bottom-2 duration-250 motion-reduce:animate-none ${turn.role === "user" ? "ml-auto flex-row-reverse" : ""}`}
               key={turn.turn_id}
             >
-              <div className="grid size-[29px] shrink-0 place-items-center rounded-full bg-muted text-sm text-primary">
-                {turn.role === "user" ? "Y" : <Leaf size={14} />}
-              </div>
+              {turn.role === "user" ? (
+                <div className="grid size-[29px] shrink-0 place-items-center rounded-full bg-muted text-sm text-primary">
+                  Y
+                </div>
+              ) : (
+                <div
+                  className="grid size-[29px] shrink-0 place-items-center overflow-hidden rounded-full bg-muted"
+                  aria-hidden="true"
+                >
+                  <Persona
+                    variant="opal"
+                    state={
+                      ["listening", "thinking", "speaking"].includes(voiceState)
+                        ? voiceState
+                        : "idle"
+                    }
+                    className="size-[29px]"
+                  />
+                </div>
+              )}
               <div className="min-w-0">
                 <div
                   className={`mb-1.5 mt-0.5 flex items-center gap-2 text-sm ${turn.role === "user" ? "justify-end" : ""}`}
@@ -168,42 +188,44 @@ export function ConversationPanel({
               </div>
             </div>
           ))}
-        </div>
-        {orderDisplays.length > 0 && (
-          <section className="mt-5" aria-label="Orders from Aura">
-            {orderDisplays.some(
-              (order) => order.source === "mock_db_sample_data",
-            ) && (
-              <p className="mb-3 text-sm text-muted-foreground">
-                Sample demo orders
-              </p>
-            )}
-            <ul className="grid gap-3">
-              {orderDisplays.map((order) => (
-                <OrderCard key={order.id} order={order} />
-              ))}
-            </ul>
-          </section>
-        )}
-        {state.tools.some(
-          (tool) =>
-            tool.name === "list_orders" &&
-            tool.result?.ok === true &&
-            Array.isArray(tool.result.orders) &&
-            tool.result.orders.length === 0,
-        ) && (
-          <p
-            className="mt-5 rounded-xl border border-border bg-muted p-4 text-sm"
-            role="status"
-          >
-            {state.tools.findLast(
-              (tool) => tool.name === "list_orders" && tool.result?.ok === true,
-            )?.result.source === "mock_db_sample_data"
-              ? "No sample demo orders were found."
-              : "Aura found no orders for this demo identity."}
-          </p>
-        )}
-      </ScrollArea>
+          {orderDisplays.length > 0 && (
+            <section className="mt-5" aria-label="Orders from Aura">
+              {orderDisplays.some(
+                (order) => order.source === "mock_db_sample_data",
+              ) && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Sample demo orders
+                </p>
+              )}
+              <ul className="grid gap-3">
+                {orderDisplays.map((order) => (
+                  <OrderCard key={order.id} order={order} />
+                ))}
+              </ul>
+            </section>
+          )}
+          {state.tools.some(
+            (tool) =>
+              tool.name === "list_orders" &&
+              tool.result?.ok === true &&
+              Array.isArray(tool.result.orders) &&
+              tool.result.orders.length === 0,
+          ) && (
+            <p
+              className="mt-5 rounded-xl border border-border bg-muted p-4 text-sm"
+              role="status"
+            >
+              {state.tools.findLast(
+                (tool) =>
+                  tool.name === "list_orders" && tool.result?.ok === true,
+              )?.result.source === "mock_db_sample_data"
+                ? "No sample demo orders were found."
+                : "Aura found no orders for this demo identity."}
+            </p>
+          )}
+        </ConversationContent>
+        <ConversationScrollButton aria-label="Scroll to latest message" />
+      </Conversation>
       {debug && (
         <div
           className="mx-4 mb-3 max-h-24 overflow-auto rounded border border-border bg-muted p-2 font-mono text-sm text-muted-foreground sm:mx-7"

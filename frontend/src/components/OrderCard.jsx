@@ -17,11 +17,29 @@ export function OrderCard({ order }) {
           {order.status}
         </Badge>
       </div>
-      <p className="mt-2 text-base">{order.product}</p>
-      <p className="mt-1 text-sm text-muted-foreground">{order.detail}</p>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Try saying: &quot;{order.hint}&quot;
-      </p>
+      <div className="mt-3 border-t border-border pt-3">
+        <h3 className="font-heading text-xl leading-snug">{order.product}</h3>
+        <p className="mt-1 text-sm text-muted-foreground">{order.detail}</p>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm">
+          {order.itemCount != null && (
+            <span className="text-muted-foreground">
+              {order.itemCount} {order.itemCount === 1 ? "item" : "items"}
+              {order.totalInr != null && " · "}
+              {order.totalInr != null &&
+                new Intl.NumberFormat("en-IN", {
+                  style: "currency",
+                  currency: "INR",
+                  maximumFractionDigits: 0,
+                }).format(order.totalInr)}
+            </span>
+          )}
+          {order.arrival && (
+            <span className="font-medium text-foreground">
+              Arrives {order.arrival}
+            </span>
+          )}
+        </div>
+      </div>
     </li>
   );
 }

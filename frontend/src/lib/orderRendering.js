@@ -26,6 +26,9 @@ export function getOrderDisplays(tools) {
       const lowerStatus = status.toLowerCase();
       displays.push({
         id,
+        itemCount: Array.isArray(order.items) ? order.items.length : null,
+        totalInr: typeof order.total_inr === "number" ? order.total_inr : null,
+        arrival: order.expected_delivery || order.estimated_delivery || null,
         product: Array.isArray(order.items)
           ? order.items
               .map((item) => (typeof item === "string" ? item : item.name))
@@ -37,10 +40,9 @@ export function getOrderDisplays(tools) {
             "Order details",
         status,
         detail:
-          order.estimated_delivery ||
-          order.delivery_date ||
-          order.created_at ||
-          "Order details from Aura",
+          order.carrier && order.carrier !== "Not yet assigned"
+            ? `${order.carrier}${order.tracking_number ? ` · ${order.tracking_number}` : ""}`
+            : null,
         hint: "Ask Aria about this order",
         Icon: lowerStatus.includes("deliver")
           ? PackageCheck

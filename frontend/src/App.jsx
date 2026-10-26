@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { callReducer, initialCallState } from "./state/callReducer.js";
 import { selectVoiceState } from "./state/selectors.js";
 import { useMockReplay } from "./hooks/useMockReplay.js";
@@ -39,7 +39,6 @@ function App() {
   const [mockData, setMockData] = useState(null);
   const [copied, setCopied] = useState(false);
   const copyTimer = useRef(null);
-  const transcriptRef = useRef(null);
   const voiceState = selectVoiceState(state);
   const {
     start: startCall,
@@ -111,21 +110,6 @@ function App() {
   useEffect(() => {
     if (scenario) startScenarioReplay();
   }, [scenario, startScenarioReplay]);
-  useEffect(() => {
-    const viewport = transcriptRef.current?.querySelector(
-      '[data-slot="scroll-area-viewport"]',
-    );
-    if (
-      viewport &&
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
-    )
-      viewport.scrollTo({
-        top: viewport.scrollHeight,
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "auto"
-          : "smooth",
-      });
-  }, [state.turns, state.tools]);
 
   const runReplay = () => {
     if (callActive) return;
@@ -173,80 +157,84 @@ function App() {
   };
 
   return (
-    <main className="mx-auto w-full max-w-[1440px] px-[13px] sm:px-[22px] lg:px-[42px]">
-      <header className="flex h-[66px] items-center justify-between border-b border-border sm:h-[82px]">
-        <a
-          href="#/"
-          onClick={() => setRoute("call")}
-          className="flex items-center gap-3 font-sans text-sm font-bold tracking-[.16em] text-primary"
-        >
-          <span className="grid size-[34px] place-items-center rounded-full bg-primary text-primary-foreground">
-            <Sparkles size={17} />
-          </span>
-          <span className="leading-[1.05]">
-            AURA
-            <small className="mt-[2px] block text-[13px] leading-[1.05] tracking-[.24em]">
-              SKINCARE
-            </small>
-          </span>
-        </a>
-      </header>
-      {route === "demo-account" ? (
-        <DemoAccountPage
-          onCreated={(name) => {
-            setDemoName(name);
-            window.location.hash = "#/";
-            setRoute("call");
-          }}
-          onBack={() => {
-            window.location.hash = "#/";
-            setRoute("call");
-          }}
-        />
-      ) : route === "summary" ? (
-        <SummaryPage
-          summary={summary}
-          copied={copied}
-          copySummary={copySummary}
-          startAnother={startAnother}
-          backToCall={() => {
-            window.location.hash = "#/";
-            setRoute("call");
-          }}
-        />
-      ) : (
-        <>
-          <div className="flex justify-end pt-3">
-            {demoName ? (
-              <Button
-                variant="ghost"
-                className="rounded-full"
-                onClick={() => {
-                  try {
-                    sessionStorage.removeItem("aura.demoIdentity.credential");
-                    sessionStorage.removeItem("aura.demoIdentity.displayName");
-                  } catch {
-                    /* unavailable storage */
-                  }
-                  setDemoName("");
-                }}
-              >
-                Demo identity: {demoName} · Reset
-              </Button>
+    <main className="min-h-screen bg-[#f7f6f0] px-3 py-3 sm:px-6 sm:py-6 2xl:px-16 2xl:py-[30px]">
+      <div className="mx-auto flex min-h-[calc(100svh-24px)] w-full max-w-[1792px] flex-col overflow-hidden rounded-[28px] border border-border bg-[#fffefa] shadow-[0_12px_50px_rgba(32,45,39,0.06)] sm:min-h-[calc(100svh-48px)] sm:rounded-[36px] 2xl:min-h-[calc(100svh-60px)]">
+        <header className="flex min-h-[72px] items-center justify-between gap-4 border-b border-border px-5 sm:min-h-[82px] sm:px-9">
+          <a
+            href="#/"
+            onClick={() => setRoute("call")}
+            className="flex min-w-0 items-center gap-3 text-foreground"
+          >
+            <span className="font-heading text-[30px] font-semibold tracking-[-.04em]">
+              aura
+            </span>
+            <span className="hidden text-sm text-muted-foreground sm:block">
+              Personal care, personally.
+            </span>
+          </a>
+          <Button
+            variant="ghost"
+            className="shrink-0 rounded-full text-sm font-medium"
+            onClick={() => {
+              if (route !== "call") {
+                window.location.hash = "#/";
+                setRoute("call");
+              } else if (demoName) {
+                try {
+                  sessionStorage.removeItem("aura.demoIdentity.credential");
+                  sessionStorage.removeItem("aura.demoIdentity.displayName");
+                } catch {
+                  /* unavailable storage */
+                }
+                setDemoName("");
+              } else {
+                window.location.hash = "#/demo-account";
+                setRoute("demo-account");
+              }
+            }}
+          >
+            {route === "call" ? (
+              demoName ? (
+                <>Demo identity: {demoName} · Reset</>
+              ) : (
+                "Create demo account"
+              )
             ) : (
-              <Button
-                variant="outline"
-                className="rounded-full"
-                onClick={() => {
-                  window.location.hash = "#/demo-account";
-                  setRoute("demo-account");
-                }}
-              >
-                Create demo account
-              </Button>
+              <>
+                <ArrowLeft data-icon="inline-start" /> Back to conversation
+              </>
             )}
+          </Button>
+        </header>
+        {route === "demo-account" ? (
+          <div className="flex-1 p-4 sm:p-8">
+            <DemoAccountPage
+              onCreated={(name) => {
+                setDemoName(name);
+                window.location.hash = "#/";
+                setRoute("call");
+              }}
+              onBack={() => {
+                window.location.hash = "#/";
+                setRoute("call");
+              }}
+            />
           </div>
-          <div className="grid items-stretch gap-4 py-4 lg:grid-cols-[minmax(360px,.82fr)_minmax(0,1.18fr)] lg:gap-7 lg:py-[30px]">
+        ) : route === "summary" ? (
+          <div className="flex-1 p-4 sm:p-8">
+            <SummaryPage
+              summary={summary}
+              copied={copied}
+              copySummary={copySummary}
+              startAnother={startAnother}
+              backToCall={() => {
+                window.location.hash = "#/";
+                setRoute("call");
+              }}
+            />
+          </div>
+        ) : (
+          <div className="grid min-h-0 flex-1 items-stretch lg:grid-cols-[minmax(350px,.95fr)_minmax(0,1.8fr)]">
             <CallPanel
               state={state}
               voiceState={voiceState}
@@ -281,7 +269,6 @@ function App() {
               voiceState={voiceState}
               errorMessage={errorMessage}
               sessionLimit={sessionLimit}
-              transcriptRef={transcriptRef}
               debug={debug}
               micStats={micStats}
               audioForwarded={state.audioForwarded}
@@ -289,8 +276,8 @@ function App() {
               isAccountMode={Boolean(demoName)}
             />
           </div>
-        </>
-      )}
+        )}
+      </div>
     </main>
   );
 }
