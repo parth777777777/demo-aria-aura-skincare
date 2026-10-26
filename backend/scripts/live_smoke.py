@@ -10,6 +10,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
+from app.domain.confirmations import PendingActionStore
 from app.domain.orders import OrderService
 from app.live.session import GeminiLiveSession
 from app.tools.registry import execute_tool
@@ -40,7 +41,9 @@ async def main() -> None:
         print(f"model: {model}")
         session = GeminiLiveSession(key, model)
         service = OrderService()
-        confirmation: dict[tuple[str, str], int] = {}
+        confirmation = PendingActionStore(
+            ttl_seconds=int(os.getenv("PENDING_ACTION_TTL_SECONDS", "300"))
+        )
         user_turn = 0
         audio_chunks = audio_bytes = output_index = input_index = 0
         try:

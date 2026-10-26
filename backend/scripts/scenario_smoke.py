@@ -14,6 +14,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 from app.data.orders import ORDERS_FILE
+from app.domain.confirmations import PendingActionStore
 from app.domain.orders import OrderService
 from app.live.prompt import ARIA_SYSTEM_PROMPT
 from app.live.session import GeminiLiveSession
@@ -118,7 +119,9 @@ async def run() -> int:
     service = OrderService()
     live = GeminiLiveSession(api_key, os.getenv("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview"))
     event_stream = live.events()
-    confirmation: dict[tuple[str, str], int] = {}
+    confirmation = PendingActionStore(
+        ttl_seconds=int(os.getenv("PENDING_ACTION_TTL_SECONDS", "300"))
+    )
     rows: list[dict[str, Any]] = []
     failures: list[str] = []
     session_events: list[str] = []

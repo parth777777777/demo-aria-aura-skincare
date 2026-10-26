@@ -5,7 +5,7 @@ from copy import deepcopy
 from threading import RLock
 from typing import Any
 
-from app.data.orders import get_order_by_id
+from app.data.orders import get_order_by_id, load_orders
 from app.data.products import get_products
 from app.domain import policy
 
@@ -62,6 +62,17 @@ class OrderService:
             # product-condition facts are intentionally not fabricated.
             policies["return_eligible"] = False
         return {"ok": True, "order": deepcopy(order), "policies": policies}
+
+    def list_orders(self) -> list[dict[str, Any]]:
+        """List the current call's complete mock dataset, including sample fixtures."""
+        with self._lock:
+            statuses = dict(self._statuses)
+            new_orders = deepcopy(self._new_orders)
+        orders = deepcopy(load_orders())
+        orders.update(new_orders)
+        for order_id, order in orders.items():
+            order["status"] = statuses.get(order_id, order["status"])
+        return [deepcopy(orders[order_id]) for order_id in sorted(orders)]
 
     def cancel_order(self, order_id: str) -> dict[str, Any]:
         normalized, order = self._current_order(order_id)
@@ -189,3 +200,11 @@ class OrderService:
             self._new_orders[order_id] = order
             self._placed_carts[cart_id] = order_id
             return {"ok": True, "order": deepcopy(order), "idempotent": False}
+
+    def get_cart_details(self, cart_id: str) -> dict[str, Any]:
+        """Return a copy of a session cart for confirmation quoting/revalidation."""
+        with self._lock:
+            cart = deepcopy(self._carts.get(cart_id))
+        if cart is None:
+            return _error("CART_NOT_FOUND", "No cart was found in this session.")
+        return {"ok": True, "cart": cart}
