@@ -413,6 +413,50 @@ def test_summary_validation_and_most_recent_successful_order():
         raise AssertionError("invalid summary accepted")
 
 
+def test_summary_keeps_all_major_order_events_in_tool_order():
+    summary = DeterministicSummary().generate([
+        {"name": "place_order", "order_id": "ORD-104", "result": {
+            "ok": True, "order": {"order_id": "ORD-104", "status": "Processing"}}},
+        {"name": "get_order_details", "order_id": "ORD-104", "result": {
+            "ok": True, "order": {"order_id": "ORD-104", "status": "Processing"}}},
+        {"name": "cancel_order", "order_id": "ORD-104", "result": {
+            "ok": True, "order_id": "ORD-104", "status": "Cancelled"}},
+    ], [])
+
+    assert summary["call_summary"] == (
+        "Placed order ORD-104. Viewed order ORD-104 (status: Processing). "
+        "Cancelled order ORD-104."
+    )
+    assert summary["order_id"] == "ORD-104"
+
+
+def test_summary_for_place_then_cancel_matches_multi_tool_order_example():
+    summary = DeterministicSummary().generate([
+        {"name": "place_order", "order_id": "ORD-201", "result": {
+            "ok": True, "order": {"order_id": "ORD-201", "status": "Processing"}}},
+        {"name": "cancel_order", "order_id": "ORD-201", "result": {
+            "ok": True, "order_id": "ORD-201", "status": "Cancelled"}},
+    ], [])
+
+    assert summary == {
+        "customer_intent": "cancellation",
+        "order_id": "ORD-201",
+        "resolution_status": "unresolved",
+        "call_summary": "Placed order ORD-201. Cancelled order ORD-201.",
+    }
+
+
+def test_summary_omits_failed_or_pending_order_actions():
+    summary = DeterministicSummary().generate([
+        {"name": "place_order", "order_id": "ORD-104", "result": {
+            "ok": False, "error": {"code": "CONFIRMATION_REQUIRED"}}},
+        {"name": "cancel_order", "order_id": "ORD-104", "result": {
+            "ok": False, "error": {"code": "NOT_ELIGIBLE"}}},
+    ], [])
+
+    assert summary["call_summary"] == "Call ended with unresolved."
+
+
 def test_ws_start_errors_malformed_session_active_audio_transcripts_tools_cancel_and_goaway(monkeypatch):
     live_instances = []
     class Scripted(FakeLive):

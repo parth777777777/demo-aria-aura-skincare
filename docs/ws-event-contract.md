@@ -150,8 +150,11 @@ V1 values are deterministic: `customer_intent` is one of `order_status`,
 `policy_question`, `out_of_scope`, `unclear`; `resolution_status` is one of
 `resolved`, `not_eligible`, `unresolved`, `out_of_scope`, `no_interaction`.
 `order_id` is the order from the most recent successful tool result or null.
-`call_summary` is template-generated. Summary construction is behind an
-interface and is validated before sending.
+`call_summary` is template-generated and may contain multiple concise,
+chronologically ordered highlights for successful major actions (such as order
+placement, order viewing, and cancellation); failed or pending actions are not
+described as completed. Summary construction is behind an interface and is
+validated before sending.
 
 ### `error`
 

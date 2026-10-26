@@ -24,6 +24,47 @@ def validate_summary(value: Any) -> dict[str, Any]:
 
 
 class DeterministicSummary:
+    @staticmethod
+    def _highlights(tools: list[dict[str, Any]]) -> list[str]:
+        highlights: list[str] = []
+        for item in tools:
+            name, result = item["name"], item["result"]
+            if not result.get("ok"):
+                continue
+
+            order = result.get("order")
+            order_id = item.get("order_id") or result.get("order_id")
+            if isinstance(order, dict):
+                order_id = order.get("order_id") or order_id
+
+            if name == "place_order":
+                if order_id:
+                    highlight = f"Placed order {order_id}."
+                else:
+                    continue
+            elif name == "get_order_details":
+                if not order_id:
+                    continue
+                status = order.get("status") if isinstance(order, dict) else None
+                detail = f" (status: {status})" if isinstance(status, str) and status else ""
+                highlight = f"Viewed order {order_id}{detail}."
+                # Avoid repetition when consecutive identical lookup results occur.
+                if highlights and highlights[-1] == highlight:
+                    continue
+            elif name == "cancel_order":
+                if not order_id:
+                    continue
+                status = result.get("status")
+                if status == "Cancelled":
+                    highlight = f"Cancelled order {order_id}."
+                else:
+                    continue
+            else:
+                continue
+
+            highlights.append(highlight)
+        return highlights
+
     def generate(self, tools: list[dict[str, Any]], transcript: list[dict[str, Any]]) -> dict[str, Any]:
         latest_order = next((item.get("order_id") for item in reversed(tools)
                              if item.get("result", {}).get("ok") and item.get("order_id")), None)
@@ -62,6 +103,7 @@ class DeterministicSummary:
                 intent = "delivery_info"
             else:
                 intent, resolution = "policy_question", "unresolved"
-        text = f"Call ended with {resolution.replace('_', ' ')}."
+        highlights = self._highlights(tools)
+        text = " ".join(highlights) if highlights else f"Call ended with {resolution.replace('_', ' ')}."
         return validate_summary({"customer_intent": intent, "order_id": latest_order,
                                  "resolution_status": resolution, "call_summary": text})
