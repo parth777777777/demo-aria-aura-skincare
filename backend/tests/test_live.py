@@ -117,6 +117,8 @@ def test_prompt_contains_policy_boundaries_and_windows():
     assert "State policy facts only from the policy text and tool results" in prompt
     assert "do not invent details" in prompt
     assert "Never guess, complete, or infer an order ID" in prompt
+    assert "call get_order_details or the matching eligibility tool before asking questions" in prompt
+    assert "never ask for status, dates, or amounts already available from the backend" in prompt
 
 
 def test_summary_validation_and_most_recent_successful_order():
