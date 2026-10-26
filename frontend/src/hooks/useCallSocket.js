@@ -13,6 +13,7 @@ import {
   createStartLock,
   endMicCall,
   onMicTrackEnded,
+  updateMicLiveState,
 } from "../lib/micLifecycle.js";
 
 export function useCallSocket(onEvent) {
@@ -24,6 +25,7 @@ export function useCallSocket(onEvent) {
   const sourceRef = useRef(null);
   const workletRef = useRef(null);
   const liveRef = useRef(false);
+  const startCancelledRef = useRef(false);
   const statsRef = useRef({
     frames: 0,
     bytes: 0,
@@ -55,6 +57,7 @@ export function useCallSocket(onEvent) {
   }, []);
   const startCall = useCallback(async () => {
     if (socketRef.current) return;
+    startCancelledRef.current = false;
     statsRef.current = {
       frames: 0,
       bytes: 0,
@@ -73,15 +76,21 @@ export function useCallSocket(onEvent) {
       playerRef.current = player;
       const resumed = context.resume();
       await resumed;
+      if (startCancelledRef.current) {
+        disposeAudio();
+        return;
+      }
       if (context.state === "suspended") throw new Error("blocked");
     } catch {
       disposeAudio();
+      if (startCancelledRef.current) return;
       eventRef.current({
         type: "error",
         code: "AUDIO_BLOCKED",
         message: "Audio playback is blocked by your browser.",
         recoverable: true,
       });
+      eventRef.current({ type: "call_cancelled" });
       return;
     }
     let socket;
@@ -92,6 +101,7 @@ export function useCallSocket(onEvent) {
       context,
       loadWorklet: (audioContext) =>
         audioContext.audioWorklet.addModule("/mic-worklet.js"),
+      shouldCancel: () => startCancelledRef.current,
       openSocket: () => {
         socket = createCallSocket({
           url: import.meta.env.VITE_WS_URL,
@@ -112,8 +122,7 @@ export function useCallSocket(onEvent) {
             }
             if (event?.type === "interrupted") playerRef.current?.flush();
             eventRef.current(event);
-            liveRef.current =
-              event?.type === "status" && event.state === "live";
+            updateMicLiveState(liveRef, event);
             if (
               event?.type === "connection_lost" ||
               event?.type === "call_cancelled" ||
@@ -134,6 +143,7 @@ export function useCallSocket(onEvent) {
           message,
           recoverable: true,
         });
+        eventRef.current({ type: "call_cancelled" });
       },
     });
     if (!acquired) {
@@ -203,6 +213,12 @@ export function useCallSocket(onEvent) {
     return startLockRef.current.run(startCall);
   }, [startCall]);
   const end = useCallback(() => {
+    if (!socketRef.current && startLockRef.current.starting) {
+      startCancelledRef.current = true;
+      disposeAudio();
+      eventRef.current({ type: "call_cancelled" });
+      return;
+    }
     endMicCall({ socket: socketRef.current, cleanup: disposeAudio });
   }, [disposeAudio]);
 

@@ -81,7 +81,12 @@ function App() {
       viewport &&
       viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 120
     )
-      viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+      viewport.scrollTo({
+        top: viewport.scrollHeight,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+      });
   }, [state.turns, state.tools]);
 
   const runReplay = () => {

@@ -56,7 +56,9 @@ export function CallPanel({
         <div className="my-4 flex items-center gap-3.5">
           <VoiceOrb state={voiceState} />
           <div className="flex flex-col gap-1">
-            <strong className="text-base">{labels[voiceState]}</strong>
+            <strong className="text-base" aria-live="polite">
+              {labels[voiceState]}
+            </strong>
             <span className="text-sm tabular-nums text-muted-foreground">
               {state.status.state === "live" ? time : " "}
             </span>

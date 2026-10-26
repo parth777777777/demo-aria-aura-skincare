@@ -225,6 +225,21 @@ test("call_cancelled returns a connecting call to idle", () => {
   assert.deepEqual(state.status, { state: "idle", reason: null });
 });
 
+test("startup failure can return to idle while preserving its permission error", () => {
+  const state = apply([
+    { type: "call_requested" },
+    {
+      type: "error",
+      code: "MICROPHONE_REQUIRED",
+      message: "Microphone access is needed.",
+      recoverable: true,
+    },
+    { type: "call_cancelled" },
+  ]);
+  assert.deepEqual(state.status, { state: "idle", reason: null });
+  assert.equal(state.error.message, "Microphone access is needed.");
+});
+
 test("selector returns idle", () =>
   assert.equal(selectVoiceState(initialCallState), "idle"));
 test("selector returns connecting", () =>

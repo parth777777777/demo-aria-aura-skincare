@@ -62,6 +62,29 @@ test("events reach onEvent", () => {
   assert.deepEqual(events, [event]);
 });
 
+test("one call uses one socket and sends start_call once across real statuses", () => {
+  const { client, events, socket } = make();
+  client.start();
+  client.start();
+  socket.open();
+  sendEvent(socket, { type: "status", state: "connecting" });
+  sendEvent(socket, { type: "status", state: "live" });
+  client.end();
+  sendEvent(socket, { type: "status", state: "ending", reason: "user_ended" });
+  sendEvent(socket, { type: "summary", summary: { call_summary: "Done" } });
+  sendEvent(socket, { type: "status", state: "ended", reason: "user_ended" });
+
+  assert.equal(socket.url, "ws://test/ws/call");
+  assert.deepEqual(socket.sent, [
+    '{"type":"start_call"}',
+    '{"type":"end_call"}',
+  ]);
+  assert.deepEqual(
+    events.map((event) => (event.type === "status" ? event.state : event.type)),
+    ["connecting", "live", "ending", "summary", "ended"],
+  );
+});
+
 test("malformed JSON is ignored", () => {
   const { events, socket } = make();
   socket.emit("message", "{");
@@ -151,6 +174,10 @@ test("end while connecting closes without sending start_call or connection_lost"
   assert.deepEqual(socket.sent, []);
   assert.equal(socket.readyState, FakeWebSocket.CLOSED);
   assert.deepEqual(events, [{ type: "call_cancelled" }]);
+  assert.equal(
+    events.some((event) => event.type === "summary"),
+    false,
+  );
 });
 
 test("disposed old socket events and close are ignored after a new socket starts", () => {

@@ -55,15 +55,20 @@ export function getOrderIdLabel(orderId) {
 export function getVisibleNotice({ error, status, turnCount = 0 }) {
   const sessionLimit =
     status?.reason === "session_limit" && status.state === "ended";
+  const endedWithError = status?.state === "ended" && status.reason === "error";
   const errorMessage =
-    status?.state === "ended"
+    status?.state === "ended" && !endedWithError
       ? null
-      : error?.recoverable === true &&
-          turnCount > 0 &&
-          error.code !== "AUDIO_BLOCKED"
-        ? null
-        : error?.message ||
-          (status?.reason === "error" ? "This call ended unexpectedly." : null);
+      : endedWithError
+        ? error?.message || "This call ended unexpectedly."
+        : error?.recoverable === true &&
+            turnCount > 0 &&
+            error.code !== "AUDIO_BLOCKED"
+          ? null
+          : error?.message ||
+            (status?.reason === "error"
+              ? "This call ended unexpectedly."
+              : null);
   return { errorMessage, sessionLimit };
 }
 

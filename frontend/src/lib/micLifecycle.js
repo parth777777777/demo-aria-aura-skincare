@@ -1,6 +1,10 @@
 export const MICROPHONE_ERROR =
   "Microphone access is needed to talk to Aria. Check your browser's permission and try again.";
 
+export function updateMicLiveState(liveRef, event) {
+  if (event?.type === "status") liveRef.current = event.state === "live";
+}
+
 export function createFrameGate({
   getSocket,
   isLive,
@@ -45,6 +49,7 @@ export async function acquireMicThenOpen({
   loadWorklet,
   openSocket,
   onError,
+  shouldCancel = () => false,
 }) {
   let stream;
   try {
@@ -56,11 +61,19 @@ export async function acquireMicThenOpen({
         autoGainControl: true,
       },
     });
+    if (shouldCancel()) {
+      cleanupMic({ stream, context });
+      return null;
+    }
     await loadWorklet(context);
+    if (shouldCancel()) {
+      cleanupMic({ stream, context });
+      return null;
+    }
     return { stream, socket: openSocket() };
   } catch {
     cleanupMic({ stream, context });
-    onError(MICROPHONE_ERROR);
+    if (!shouldCancel()) onError(MICROPHONE_ERROR);
     return null;
   }
 }

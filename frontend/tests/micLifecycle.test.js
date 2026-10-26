@@ -8,6 +8,7 @@ import {
   endMicCall,
   MICROPHONE_ERROR,
   onMicTrackEnded,
+  updateMicLiveState,
 } from "../src/lib/micLifecycle.js";
 
 function socket(readyState = 1, bufferedAmount = 0) {
@@ -39,6 +40,39 @@ test("mic gate sends frames while live and socket open", () => {
   assert.equal(send("frame"), true);
   assert.deepEqual(ws.sent, ["frame"]);
 });
+
+test("non-status events preserve live mic gate until a non-live status", () => {
+  const ws = socket();
+  const liveRef = { current: false };
+  const rejected = [];
+  const send = createFrameGate({
+    getSocket: () => ws,
+    isLive: () => liveRef.current,
+    onRejected: (reason) => rejected.push(reason),
+  });
+
+  updateMicLiveState(liveRef, { type: "status", state: "live" });
+  assert.equal(send("before-provider-event"), true);
+  for (const event of [
+    { type: "provider_activity" },
+    { type: "transcript", turn_id: "u1" },
+    { type: "tool_result", call_id: "c1" },
+  ]) {
+    updateMicLiveState(liveRef, event);
+    assert.equal(send(event.type), true);
+  }
+
+  updateMicLiveState(liveRef, { type: "status", state: "ending" });
+  assert.equal(send("after-ending"), false);
+  assert.deepEqual(ws.sent, [
+    "before-provider-event",
+    "provider_activity",
+    "transcript",
+    "tool_result",
+  ]);
+  assert.deepEqual(rejected, ["not_live"]);
+});
+
 test("mic gate drops frames when socket is closed", () => {
   const ws = socket(3);
   const rejected = [];
@@ -124,6 +158,32 @@ test("worklet load failure creates no socket, shows fixed error and releases con
   assert.equal(opened, false);
   assert.equal(shown, MICROPHONE_ERROR);
   assert.equal(closed, 1);
+});
+
+test("cancelling during microphone permission releases resources and opens no socket", async () => {
+  let resolvePermission;
+  let cancelled = false;
+  let stopped = 0;
+  let opened = false;
+  const resultPromise = acquireMicThenOpen({
+    getUserMedia: () =>
+      new Promise((resolve) => {
+        resolvePermission = resolve;
+      }),
+    context: { state: "closed" },
+    loadWorklet: async () => {},
+    openSocket: () => {
+      opened = true;
+    },
+    onError: () => assert.fail("cancellation must not report a mic error"),
+    shouldCancel: () => cancelled,
+  });
+
+  cancelled = true;
+  resolvePermission({ getTracks: () => [{ stop: () => stopped++ }] });
+  assert.equal(await resultPromise, null);
+  assert.equal(stopped, 1);
+  assert.equal(opened, false);
 });
 test("cleanup stops all tracks and disconnects source and worklet nodes", () => {
   let stops = 0;

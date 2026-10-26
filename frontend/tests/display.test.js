@@ -61,7 +61,7 @@ test("labels null order IDs", () => {
   assert.equal(getOrderIdLabel("ORD-101"), "ORD-101");
 });
 
-test("shows recoverable notices until a call ends or transcript arrives, fatal notices always, and session limit notice", () => {
+test("shows errors for error endings, suppresses stale recoverable notices, and reports session limits", () => {
   const recoverable = { message: "Disconnected", recoverable: true };
   assert.equal(
     getVisibleNotice({ error: recoverable, status: { state: "live" } })
@@ -77,9 +77,25 @@ test("shows recoverable notices until a call ends or transcript arrives, fatal n
     null,
   );
   assert.equal(
-    getVisibleNotice({ error: recoverable, status: { state: "ended" } })
-      .errorMessage,
+    getVisibleNotice({
+      error: recoverable,
+      status: { state: "ended", reason: "user_ended" },
+    }).errorMessage,
     null,
+  );
+  assert.equal(
+    getVisibleNotice({
+      error: { ...recoverable, message: "Provider session failed." },
+      status: { state: "ended", reason: "error" },
+      turnCount: 3,
+    }).errorMessage,
+    "Provider session failed.",
+  );
+  assert.equal(
+    getVisibleNotice({
+      status: { state: "ended", reason: "error" },
+    }).errorMessage,
+    "This call ended unexpectedly.",
   );
   assert.equal(
     getVisibleNotice({
