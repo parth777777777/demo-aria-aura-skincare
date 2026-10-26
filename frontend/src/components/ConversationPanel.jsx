@@ -49,7 +49,7 @@ export function ConversationPanel({
   } else if (latestAction?.result?.ok === false) {
     actionMessage =
       "Aura did not complete this action. Aria can explain what happened.";
-  } else if (latestAction?.result == null) {
+  } else if (latestAction && latestAction.result == null) {
     actionMessage = "Aria is checking this action with Aura…";
   }
   const actionKey = actionMessage
@@ -63,7 +63,10 @@ export function ConversationPanel({
     );
     return () => window.clearTimeout(timeoutId);
   }, [actionKey, pauseActionDismissal]);
-  const orderDisplays = getOrderDisplays(state.tools);
+  const conversationItems = [
+    ...state.turns.map((turn) => ({ ...turn, kind: "turn" })),
+    ...state.tools.map((tool) => ({ ...tool, kind: "tool" })),
+  ].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
   return (
     <section
       className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm"
@@ -167,85 +170,94 @@ export function ConversationPanel({
               {!isAccountMode && <SampleOrders />}
             </div>
           )}
-          {state.turns.map((turn) => (
-            <div
-              className={`mb-5 flex max-w-[96%] gap-3 animate-in fade-in slide-in-from-bottom-2 duration-250 motion-reduce:animate-none ${turn.role === "user" ? "ml-auto flex-row-reverse" : ""}`}
-              key={turn.turn_id}
-            >
-              {turn.role === "user" ? (
-                <div className="grid size-[29px] shrink-0 place-items-center rounded-full bg-muted text-sm text-primary">
-                  Y
-                </div>
-              ) : (
+          {conversationItems.map((item) => {
+            if (item.kind === "tool") {
+              const orderDisplays = getOrderDisplays([item]);
+              const isEmptyOrderList =
+                item.name === "list_orders" &&
+                item.result?.ok === true &&
+                Array.isArray(item.result.orders) &&
+                item.result.orders.length === 0;
+              if (!orderDisplays.length && !isEmptyOrderList) return null;
+              return (
                 <div
-                  className="grid size-[29px] shrink-0 place-items-center overflow-hidden rounded-full bg-muted"
-                  aria-hidden="true"
+                  className="mb-5 ml-10 max-w-[min(92%,38rem)]"
+                  key={`tool-${item.call_id}`}
                 >
-                  <Persona
-                    variant="opal"
-                    state={
-                      ["listening", "thinking", "speaking"].includes(voiceState)
-                        ? voiceState
-                        : "idle"
-                    }
-                    className="size-[29px]"
-                  />
-                </div>
-              )}
-              <div className="min-w-0">
-                <div
-                  className={`mb-1.5 mt-0.5 flex items-center gap-2 text-sm ${turn.role === "user" ? "justify-end" : ""}`}
-                >
-                  <strong>{turn.role === "user" ? "You" : "Aria"}</strong>
-                  {turn.interrupted && (
-                    <span className="rounded-full bg-amber-100 px-2 py-1 text-sm text-amber-950">
-                      Interrupted
-                    </span>
+                  {orderDisplays.some(
+                    (order) => order.source === "mock_db_sample_data",
+                  ) && (
+                    <p className="mb-2 text-sm text-muted-foreground">
+                      Sample demo orders
+                    </p>
+                  )}
+                  {orderDisplays.length > 0 ? (
+                    <ul className="grid gap-3">
+                      {orderDisplays.map((order) => (
+                        <OrderCard key={order.id} order={order} />
+                      ))}
+                    </ul>
+                  ) : (
+                    <p
+                      className="rounded-xl border border-border bg-muted p-4 text-sm"
+                      role="status"
+                    >
+                      {item.result.source === "mock_db_sample_data"
+                        ? "No sample demo orders were found."
+                        : "Aura found no orders for this demo identity."}
+                    </p>
                   )}
                 </div>
-                <div
-                  className={`break-words rounded-[4px_16px_16px] bg-muted p-3.5 text-base leading-relaxed ${turn.role === "user" ? "rounded-[16px_4px_16px_16px]" : ""}`}
-                >
-                  {turn.text}
+              );
+            }
+            const turn = item;
+            return (
+              <div
+                className={`mb-5 flex max-w-[96%] gap-3 animate-in fade-in slide-in-from-bottom-2 duration-250 motion-reduce:animate-none ${turn.role === "user" ? "ml-auto flex-row-reverse" : ""}`}
+                key={turn.turn_id}
+              >
+                {turn.role === "user" ? (
+                  <div className="grid size-[29px] shrink-0 place-items-center rounded-full bg-muted text-sm text-primary">
+                    Y
+                  </div>
+                ) : (
+                  <div
+                    className="grid size-[29px] shrink-0 place-items-center overflow-hidden rounded-full bg-muted"
+                    aria-hidden="true"
+                  >
+                    <Persona
+                      variant="opal"
+                      state={
+                        ["listening", "thinking", "speaking"].includes(
+                          voiceState,
+                        )
+                          ? voiceState
+                          : "idle"
+                      }
+                      className="size-[29px]"
+                    />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <div
+                    className={`mb-1.5 mt-0.5 flex items-center gap-2 text-sm ${turn.role === "user" ? "justify-end" : ""}`}
+                  >
+                    <strong>{turn.role === "user" ? "You" : "Aria"}</strong>
+                    {turn.interrupted && (
+                      <span className="rounded-full bg-amber-100 px-2 py-1 text-sm text-amber-950">
+                        Interrupted
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className={`break-words rounded-[4px_16px_16px] bg-muted p-3.5 text-base leading-relaxed ${turn.role === "user" ? "rounded-[16px_4px_16px_16px]" : ""}`}
+                  >
+                    {turn.text}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-          {orderDisplays.length > 0 && (
-            <section className="mt-5" aria-label="Orders from Aura">
-              {orderDisplays.some(
-                (order) => order.source === "mock_db_sample_data",
-              ) && (
-                <p className="mb-3 text-sm text-muted-foreground">
-                  Sample demo orders
-                </p>
-              )}
-              <ul className="grid gap-3">
-                {orderDisplays.map((order) => (
-                  <OrderCard key={order.id} order={order} />
-                ))}
-              </ul>
-            </section>
-          )}
-          {state.tools.some(
-            (tool) =>
-              tool.name === "list_orders" &&
-              tool.result?.ok === true &&
-              Array.isArray(tool.result.orders) &&
-              tool.result.orders.length === 0,
-          ) && (
-            <p
-              className="mt-5 rounded-xl border border-border bg-muted p-4 text-sm"
-              role="status"
-            >
-              {state.tools.findLast(
-                (tool) =>
-                  tool.name === "list_orders" && tool.result?.ok === true,
-              )?.result.source === "mock_db_sample_data"
-                ? "No sample demo orders were found."
-                : "Aura found no orders for this demo identity."}
-            </p>
-          )}
+            );
+          })}
         </ConversationContent>
         <ConversationScrollButton aria-label="Scroll to latest message" />
       </Conversation>

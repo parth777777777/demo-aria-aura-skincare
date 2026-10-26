@@ -158,7 +158,9 @@ function App() {
 
   return (
     <main className="min-h-screen bg-[#f7f6f0] px-3 py-3 sm:px-6 sm:py-6 2xl:px-16 2xl:py-[30px]">
-      <div className="mx-auto flex min-h-[calc(100svh-24px)] w-full max-w-[1792px] flex-col overflow-hidden rounded-[28px] border border-border bg-[#fffefa] shadow-[0_12px_50px_rgba(32,45,39,0.06)] sm:min-h-[calc(100svh-48px)] sm:rounded-[36px] lg:h-[calc(100svh-48px)] lg:min-h-[730px] 2xl:h-[calc(100svh-60px)] 2xl:min-h-[730px]">
+      <div
+        className={`mx-auto flex min-h-[calc(100svh-24px)] w-full max-w-[1792px] flex-col overflow-hidden rounded-[28px] border border-border bg-[#fffefa] shadow-[0_12px_50px_rgba(32,45,39,0.06)] sm:min-h-[calc(100svh-48px)] sm:rounded-[36px] lg:h-[calc(100svh-48px)] 2xl:h-[calc(100svh-60px)] ${route === "summary" ? "lg:min-h-0" : "lg:min-h-[730px] 2xl:min-h-[730px]"}`}
+      >
         <header className="flex min-h-[72px] items-center justify-between gap-4 border-b border-border px-5 sm:min-h-[82px] sm:px-9">
           <a
             href="#/"
@@ -221,7 +223,7 @@ function App() {
             />
           </div>
         ) : route === "summary" ? (
-          <div className="flex-1 p-4 sm:p-8">
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8">
             <SummaryPage
               summary={summary}
               copied={copied}

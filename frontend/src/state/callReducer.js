@@ -2,6 +2,7 @@ export const initialCallState = {
   status: { state: "idle", reason: null },
   turns: [],
   tools: [],
+  eventSequence: 0,
   summary: null,
   error: null,
   interrupted: false,
@@ -74,19 +75,25 @@ export function callReducer(state = initialCallState, event) {
       return { ...state, providerActivity: true };
     case "transcript": {
       if (typeof event.turn_id !== "string") return state;
+      const index = state.turns.findIndex(
+        (item) => item.turn_id === event.turn_id,
+      );
       const turn = {
         turn_id: event.turn_id,
         role: event.role,
         text: event.text,
         final: Boolean(event.final),
+        sequence: index < 0 ? state.eventSequence : state.turns[index].sequence,
       };
-      const index = state.turns.findIndex(
-        (item) => item.turn_id === event.turn_id,
-      );
       const turns = [...state.turns];
       if (index < 0) turns.push(turn);
       else if (!state.turns[index].final || turn.final) turns[index] = turn;
-      return { ...state, turns };
+      return {
+        ...state,
+        turns,
+        eventSequence:
+          index < 0 ? state.eventSequence + 1 : state.eventSequence,
+      };
     }
     case "tool_call": {
       if (typeof event.call_id !== "string") return state;
@@ -96,11 +103,17 @@ export function callReducer(state = initialCallState, event) {
       const tools = [...state.tools];
       const item = {
         ...omitConfirmationSecrets(event),
+        sequence: index < 0 ? state.eventSequence : tools[index].sequence,
         result: index < 0 ? null : tools[index].result,
       };
       if (index < 0) tools.push(item);
       else tools[index] = item;
-      return { ...state, tools };
+      return {
+        ...state,
+        tools,
+        eventSequence:
+          index < 0 ? state.eventSequence + 1 : state.eventSequence,
+      };
     }
     case "tool_result": {
       if (typeof event.call_id !== "string") return state;
@@ -113,6 +126,7 @@ export function callReducer(state = initialCallState, event) {
           ? {
               call_id: event.call_id,
               name: event.name,
+              sequence: state.eventSequence,
               result: omitConfirmationSecrets(event.result),
             }
           : {
@@ -121,7 +135,12 @@ export function callReducer(state = initialCallState, event) {
             };
       if (index < 0) tools.push(item);
       else tools[index] = item;
-      return { ...state, tools };
+      return {
+        ...state,
+        tools,
+        eventSequence:
+          index < 0 ? state.eventSequence + 1 : state.eventSequence,
+      };
     }
     case "interrupted": {
       const turns = [...state.turns];
