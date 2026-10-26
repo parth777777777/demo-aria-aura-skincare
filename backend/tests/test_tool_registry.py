@@ -158,6 +158,36 @@ def test_cart_validation_rejects_bad_quantity_product_and_untrusted_price():
         assert registry.execute_tool(service, "build_order_cart", arguments)["ok"] is False
 
 
+def test_cart_resolves_normalized_catalog_ids_and_names():
+    variants = ("hydrating_sunscreen_spf_50", "Hydrating Sunscreen SPF 50", "hydrating-sunscreen-spf50")
+    for variant in variants:
+        result = _cart(OrderService(), variant)
+        assert result["ok"] is True
+        assert result["cart"]["items"][0]["product_id"] == "hydrating-sunscreen-spf50"
+        assert result["cart"]["items"][0]["unit_price_inr"] == 499
+
+
+def test_cart_rejects_unknown_and_ambiguous_normalized_product_names(monkeypatch):
+    from app.domain import orders as order_domain
+
+    assert _cart(OrderService(), "not a catalog product")["error"]["code"] == "PRODUCT_NOT_FOUND"
+    monkeypatch.setattr(order_domain, "get_products", lambda: {
+        "alpha-1": {"id": "alpha-1", "name": "Beta", "price_inr": 100},
+        "other": {"id": "other", "name": "Alpha 1", "price_inr": 200},
+    })
+    ambiguous = _cart(OrderService(), "alpha_1")
+    assert ambiguous["error"]["code"] == "AMBIGUOUS_PRODUCT"
+
+
+def test_build_cart_schema_lists_catalog_ids_and_names():
+    from app.data.products import get_products
+
+    definition = next(d for d in registry.get_tool_definitions() if d["name"] == "build_order_cart")
+    for product in get_products().values():
+        assert product["id"] in definition["description"]
+        assert product["name"] in definition["description"]
+
+
 def test_place_order_is_idempotent_visible_cancellable_and_session_local():
     first, second = OrderService(), OrderService()
     cart = _cart(first, "green-tea-face-wash") ["cart"]

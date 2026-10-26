@@ -5,6 +5,7 @@ from copy import deepcopy
 import math
 from typing import Any
 
+from app.data.products import get_products
 from app.domain.orders import OrderService
 
 
@@ -119,7 +120,17 @@ def _validate(name: str, arguments: Any) -> dict[str, Any]:
     return validated
 
 def get_tool_definitions() -> list[dict[str, Any]]:
-    return deepcopy(list(_DEFINITIONS))
+    definitions = deepcopy(list(_DEFINITIONS))
+    products = get_products()
+    catalog = "; ".join(f"{product['id']} — {product['name']}"
+                         for product in products.values())
+    for definition in definitions:
+        if definition["name"] == "build_order_cart":
+            definition["description"] = (
+                "Build and price a cart from the backend demo catalog. Valid product IDs and names: "
+                f"{catalog}. Use the canonical ID or product name."
+            )
+    return definitions
 
 def list_tools() -> tuple[str, ...]:
     return tuple(definition["name"] for definition in _DEFINITIONS)

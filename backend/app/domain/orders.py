@@ -138,12 +138,21 @@ class OrderService:
 
     def build_order_cart(self, items: list[dict[str, Any]], payment_method: str) -> dict[str, Any]:
         products = get_products()
+        normalized_products: dict[str, set[str]] = {}
+        for product in products.values():
+            for value in (product["id"], product["name"]):
+                key = re.sub(r"[^a-z0-9]", "", value.casefold())
+                normalized_products.setdefault(key, set()).add(product["id"])
         cart_items = []
         subtotal = 0
         for item in items:
-            product = products.get(item["product_id"])
-            if product is None:
+            product_key = re.sub(r"[^a-z0-9]", "", item["product_id"].casefold())
+            matches = normalized_products.get(product_key, set())
+            if len(matches) > 1:
+                return _error("AMBIGUOUS_PRODUCT", "Product name or ID matches multiple catalog products.")
+            if not matches:
                 return _error("PRODUCT_NOT_FOUND", "A cart item is not in the demo catalog.")
+            product = products[next(iter(matches))]
             line_total = product["price_inr"] * item["quantity"]
             subtotal += line_total
             cart_items.append({"product_id": product["id"], "name": product["name"],
