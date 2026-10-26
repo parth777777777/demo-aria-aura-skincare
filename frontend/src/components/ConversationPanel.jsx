@@ -1,4 +1,4 @@
-import { AlertCircle, Sparkles } from "lucide-react";
+import { AlertCircle, Sparkles, X } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Conversation,
@@ -6,6 +6,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ui/conversation";
 import { Persona } from "@/components/ai-elements/persona.jsx";
+import { useEffect, useState } from "react";
 import { OrderCard } from "./OrderCard.jsx";
 import { SampleOrders } from "./SampleOrders.jsx";
 import { getOrderDisplays } from "../lib/orderRendering.js";
@@ -31,13 +32,41 @@ export function ConversationPanel({
   providerActivity = false,
   isAccountMode = false,
 }) {
+  const [dismissedActionKey, setDismissedActionKey] = useState(null);
+  const [pauseActionDismissal, setPauseActionDismissal] = useState(false);
   const actionTools = state.tools.filter((tool) =>
     ["cancel_order", "place_order"].includes(tool.name),
   );
+  const latestAction = actionTools.at(-1);
+  let actionMessage = null;
+  if (latestAction?.result?.ok === true) {
+    actionMessage =
+      latestAction.name === "cancel_order"
+        ? "Aura confirmed the cancellation."
+        : "Aura confirmed the order placement.";
+  } else if (latestAction?.result?.error?.code === "CONFIRMATION_REQUIRED") {
+    actionMessage = "Waiting for confirmation in your conversation with Aria.";
+  } else if (latestAction?.result?.ok === false) {
+    actionMessage =
+      "Aura did not complete this action. Aria can explain what happened.";
+  } else if (latestAction?.result == null) {
+    actionMessage = "Aria is checking this action with Aura…";
+  }
+  const actionKey = actionMessage
+    ? `${latestAction.call_id}:${actionMessage}`
+    : null;
+  useEffect(() => {
+    if (!actionKey || pauseActionDismissal) return undefined;
+    const timeoutId = window.setTimeout(
+      () => setDismissedActionKey(actionKey),
+      10000,
+    );
+    return () => window.clearTimeout(timeoutId);
+  }, [actionKey, pauseActionDismissal]);
   const orderDisplays = getOrderDisplays(state.tools);
   return (
     <section
-      className="flex min-w-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm lg:min-h-[730px]"
+      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-none border border-border bg-card shadow-sm"
       aria-labelledby="conversation-title"
     >
       <div className="flex items-center justify-between border-b border-border px-5 py-5 sm:px-[29px]">
@@ -93,39 +122,33 @@ export function ConversationPanel({
             </AlertDescription>
           </Alert>
         )}
-      {actionTools.length > 0 && (
-        <div className="grid gap-2 px-4 pt-4 sm:px-7" aria-live="polite">
-          {actionTools.map((tool) => {
-            const code = tool.result?.error?.code;
-            let message = null;
-            if (tool.result?.ok === true) {
-              message =
-                tool.name === "cancel_order"
-                  ? "Aura confirmed the cancellation."
-                  : "Aura confirmed the order placement.";
-            } else if (code === "CONFIRMATION_REQUIRED") {
-              message =
-                "Waiting for confirmation in your conversation with Aria.";
-            } else if (tool.result?.ok === false) {
-              message =
-                "Aura did not complete this action. Aria can explain what happened.";
-            } else if (tool.result == null) {
-              message = "Aria is checking this action with Aura…";
+      {actionMessage && actionKey !== dismissedActionKey && (
+        <div
+          className="mx-4 mt-4 flex items-start justify-between gap-3 rounded-xl border border-border bg-muted px-4 py-3 text-sm sm:mx-7"
+          role="status"
+          aria-live="polite"
+          onMouseEnter={() => setPauseActionDismissal(true)}
+          onMouseLeave={() => setPauseActionDismissal(false)}
+          onFocusCapture={() => setPauseActionDismissal(true)}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              setPauseActionDismissal(false);
             }
-            return message ? (
-              <p
-                key={tool.call_id}
-                className="rounded-xl border border-border bg-muted px-4 py-3 text-sm"
-                role="status"
-              >
-                {message}
-              </p>
-            ) : null;
-          })}
+          }}
+        >
+          <span>{actionMessage}</span>
+          <button
+            type="button"
+            className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-full text-muted-foreground hover:bg-background hover:text-foreground"
+            aria-label="Dismiss action notification"
+            onClick={() => setDismissedActionKey(actionKey)}
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
         </div>
       )}
       <Conversation
-        className="min-h-[300px] flex-1 overflow-hidden"
+        className="min-h-0 max-h-[60svh] flex-1 overflow-y-auto lg:max-h-none"
         aria-label="Conversation transcript"
       >
         <ConversationContent className="min-w-0 px-4 py-5 sm:px-7">
