@@ -1,6 +1,7 @@
 import { FileText, Phone, PhoneOff, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Persona } from "@/components/ai-elements/persona.jsx";
+import heroImage from "@/assets/laura-jaeger-7LAbLSKbkaQ-unsplash.jpg";
 
 const labels = {
   idle: "Ready when you are",
@@ -34,7 +35,7 @@ export function CallPanel({
     >
       <div className="relative h-[190px] shrink-0 overflow-hidden bg-gradient-to-br from-[#dce5d6] via-[#9daf99] to-[#758b76] sm:h-[230px] 2xl:h-[250px]">
         <img
-          src="/src/assets/laura-jaeger-7LAbLSKbkaQ-unsplash.jpg"
+          src={heroImage}
           alt=""
           className="absolute size-full object-cover"
           onError={(event) => {
